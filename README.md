@@ -32,9 +32,15 @@ three layers; we are still on layer 1.
 
 | Layer | Goal | Status |
 |---|---|---|
-| 1. Boot handoff | Samsung ABL → Project Aloha SM8150 UEFI → LinuxLoader | **in progress** — root cause of prior failures found; corrected image built, awaiting a device test |
-| 2. Kernel | mainline SM8150 `Image` + `gts6lwifi` DTB booted by UEFI | DTS + lean config build on the ARM64 build host; not yet handed off |
+| 1. Boot handoff | Samsung ABL → Project Aloha SM8150 UEFI | **✅ SOLVED** — UEFI (edk2/Project Mu) boots and reaches its USB/fastboot screen on real SM‑T860 hardware |
+| 2. Kernel | mainline SM8150 `Image` + `gts6lwifi` DTB booted by UEFI | next — provide an EFI‑bootable payload (ESP/USB) with kernel + DTB + initramfs |
 | 3. Userspace | Fedora aarch64 + KDE Plasma on internal UFS | design only |
+
+**Layer 1 is cracked.** The chain `patched stock boot kernel → DualBootKernelPatcher
+shellcode → SM8150 UEFI FD @0x9FC00000 → edk2` executes on the SM‑T860. The two
+things that made it finally work: (a) `magiskboot repack` to preserve the Samsung
+`SEANDROIDENFORCE`/AVB trailer, and (b) understanding the boot routing (the BCB and
+Magisk‑in‑recovery). See [`docs/DEVLOG.md`](docs/DEVLOG.md).
 
 ### The boot problem, in one paragraph
 
