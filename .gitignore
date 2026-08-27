@@ -1,0 +1,47 @@
+# ============================================================================
+# NEVER COMMIT — proprietary firmware, device identity, and private dumps
+# ============================================================================
+# Samsung/Qualcomm stock firmware and any extracted partitions
+firmware/**/*.img
+firmware/**/*.bin
+firmware/**/*.tar
+firmware/**/*.tar.md5
+firmware/**/*.lz4
+firmware/**/*.mbn
+firmware/**/*.fd
+*.tar.md5
+
+# Partition dumps and device-identity material (efs, modem, security, GPT)
+**/efs*
+**/sec_efs*
+**/modem*
+**/persist*
+**/vbmeta*
+**/keymaster*
+**/keystore*
+**/tz.img
+**/xbl*
+**/abl*
+**/*sec*.img
+01_dumps/
+02_extracted/
+dumps/
+partitions/
+
+# Full boot/recovery images (contain Samsung signed payloads)
+*.img
+!kernel/dts/**/*.dts
+new-boot*.img
+boot-*.img
+recovery-*.img
+
+# Build trees, kernel sources (large, GPL — clone fresh)
+linux/
+*.o
+*.ko
+!kernel/prebuilt-modules/*.ko
+
+# Scratch
+scratchpad/
+*.tmp
+__pycache__/

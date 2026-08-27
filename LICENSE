@@ -1,0 +1,30 @@
+gts6l mainline Linux, licensing
+===============================
+
+SPDX-License-Identifier: GPL-2.0-only
+
+The kernel and driver code in this repository (everything under kernel/, the
+brcmfmac and PCIe and ACPM sources, the device tree, and the kernel patches) is
+derived from the Linux kernel and is therefore licensed under the GNU General
+Public License version 2 (GPL-2.0-only), the same terms as the Linux kernel it
+derives from. The build and flash tooling and the documentation are provided
+under the same terms for simplicity.
+
+The Project Aloha UEFI firmware and DualBootKernelPatcher referenced by the boot
+method are upstream projects under their own licenses; this repository documents
+their use but does not vendor them.
+
+The full text of the GNU General Public License version 2 is the canonical
+document at https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt and is the
+identical text shipped as COPYING in the Linux kernel source tree. If you
+redistribute this repository, include that full license text as this LICENSE
+file (drop in the kernel COPYING verbatim).
+
+NOT covered by this license
+---------------------------
+
+No proprietary firmware is included in this repository. Broadcom and Samsung
+firmware, NVRAM, calibration data, partition dumps, IMEI or EFS data, and
+Samsung stock images are deliberately excluded. Those files remain the property
+of their respective owners, are not licensed here, and must be extracted from
+your own device (see firmware/README.md). Do not add them to a public fork.
