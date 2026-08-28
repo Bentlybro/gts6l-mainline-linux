@@ -1,107 +1,141 @@
 # Mainline Linux on the Samsung Galaxy Tab S6 Wi‑Fi (Snapdragon 855, `gts6lwifi`)
 
-An in‑progress effort to boot **real mainline Linux — Fedora aarch64 with KDE
-Plasma — natively** on the Samsung Galaxy Tab S6 Wi‑Fi (SM‑T860, codename
-`gts6lwifi`, Qualcomm **SM8150** / Snapdragon 855). Not an Android chroot, not a
-container, not postmarketOS‑as‑a‑dependency — a hand‑integrated mainline kernel
-with a real desktop userspace.
+Booting **real mainline Linux — Fedora 44 aarch64 with a full KDE Plasma desktop —
+natively** on the Samsung Galaxy Tab S6 Wi‑Fi (SM‑T860, codename `gts6lwifi`,
+Qualcomm **SM8150** / Snapdragon 855). Installed on the internal UFS. Not an Android
+chroot, not a container, not postmarketOS‑as‑a‑dependency — a hand‑integrated
+mainline kernel driving a real desktop userspace, with **GPU acceleration, working
+multitouch, and a USB‑networking lifeline**.
 
-This repository is the **shareable, reproducible subset** of that project: the
-boot method, the device tree and kernel work, the packaging/analysis tooling, and
-the full technical write‑ups. It exists because Samsung's SM8150 tablets have no
-turn‑key mainline path, and the boot‑chain problem in particular (getting past
-Samsung's locked‑down ABL) burned a lot of time that nobody should have to repeat.
+This repository is the **shareable, reproducible subset** of that project: the boot
+method, the device tree and kernel work, per‑subsystem bring‑up guides, packaging
+and analysis tooling, and the full technical write‑ups. Samsung's SM8150 tablets
+have no turn‑key mainline path, and several of the walls here (the locked ABL boot
+handoff, a UFS clock that lies about being off, a display pipe you must **not**
+touch, a Wi‑Fi firmware that hard‑locks the SoC) cost real time — this exists so the
+next person doesn't repeat them.
 
-> **Sister project:** the [Galaxy S20 Ultra (`z3s`, Exynos 990)](../z3s-mainline-linux)
-> reached a full GPU‑accelerated KDE Plasma desktop. The *methodology* transfers
-> (stock DT first, USB/serial lifeline, one subsystem per boot, hash before every
-> flash); the *hardware does not* — the S20 is Exynos with an `lk3rd`/uniLoader
-> chain, this tablet is Qualcomm with a completely different boot story.
+> **Sister project:** the Galaxy S20 Ultra (`z3s`, Exynos 990) reached a full
+> GPU‑accelerated KDE Plasma desktop first. The *methodology* transfers (stock DT
+> first, USB/serial lifeline, one subsystem per boot, hash before every flash,
+> simpledrm + render‑only GPU); the *hardware does not* — the S20 is Exynos with an
+> `lk3rd`/uniLoader chain, this tablet is Qualcomm with a completely different boot
+> story.
 
 ## No proprietary data
 
-No Samsung/Qualcomm firmware, no partition dumps, no `efs`/`sec_efs`/IMEI/serial,
-no stock images are in this repo. See [`firmware/README.md`](firmware/README.md)
-for how to extract what you need **from your own device**. The `.gitignore` is
-deliberately aggressive about this.
+No Samsung/Qualcomm firmware, no partition dumps, no `efs`/`sec_efs`/IMEI/serial, no
+stock images are in this repo. Every firmware blob the port needs is extracted **from
+your own device** — see [`firmware/README.md`](firmware/README.md). The `.gitignore`
+is deliberately aggressive about this.
 
 ## Current status — honest
 
-This is a **boot‑bring‑up in progress**, not a working desktop yet. The project is
-three layers; we are still on layer 1.
+A **daily‑drivable desktop is up**, with two subsystems still open (Wi‑Fi, native
+display/brightness). The project has three layers; **layers 1 and 3 are done and
+layer 2 is a working mainline kernel** with most of the SoC brought up.
 
 | Layer | Goal | Status |
 |---|---|---|
-| 1. Boot handoff | Samsung ABL → Project Aloha SM8150 UEFI | **✅ SOLVED** — UEFI (edk2/Project Mu) boots and reaches its USB/fastboot screen on real SM‑T860 hardware |
-| 2. Kernel | mainline SM8150 `Image` + `gts6lwifi` DTB booted by UEFI | next — provide an EFI‑bootable payload (ESP/USB) with kernel + DTB + initramfs |
-| 3. Userspace | Fedora aarch64 + KDE Plasma on internal UFS | design only |
+| 1. Boot handoff | Samsung ABL → Project Aloha SM8150 UEFI → systemd‑boot | **✅ SOLVED** |
+| 2. Kernel | mainline SM8150 `Image` + `gts6lwifi` DTB, EFI‑stub booted | **✅ working** (6.12) |
+| 3. Userspace | Fedora 44 aarch64 + KDE Plasma on internal UFS | **✅ running** |
 
-**Layer 1 is cracked.** The chain `patched stock boot kernel → DualBootKernelPatcher
-shellcode → SM8150 UEFI FD @0x9FC00000 → edk2` executes on the SM‑T860. The two
-things that made it finally work: (a) `magiskboot repack` to preserve the Samsung
-`SEANDROIDENFORCE`/AVB trailer, and (b) understanding the boot routing (the BCB and
-Magisk‑in‑recovery). See [`docs/DEVLOG.md`](docs/DEVLOG.md).
+### Per‑subsystem
 
-### The boot problem, in one paragraph
+| Subsystem | Status | Notes |
+|---|---|---|
+| Boot handoff (Aloha UEFI → systemd‑boot on cache ESP) | ✅ | Volume‑Down = fastboot; iterate by re‑flashing the cache ESP |
+| UFS internal storage | ✅ | needed a `BRANCH_HALT_SKIP` fix on 18 UFS/USB clocks (Aloha TZ lies about halt status) |
+| Display (KDE Plasma visible) | ✅ | `simpledrm` on the untouched bootloader framebuffer @2560×1600; **do not** enable the DSI/DPU pipe |
+| Multitouch | ✅ | STM `fts1ba90a` (Samsung SEC‑TS protocol), GPI‑DMA on QUP2 |
+| GPU acceleration | ✅ | Adreno 640 render‑only via `msm`/freedreno, Mesa kmsro pairs it with simpledrm; Samsung‑signed zap shader |
+| USB networking + SSH | ✅ | RNDIS+ACM configfs gadget → root SSH over USB (the dev lifeline) |
+| Wi‑Fi (WCN3990) | 🚧 | modem + full ath10k QMI handshake work; fw crashes on RF init — see [`docs/WIFI.md`](docs/WIFI.md) |
+| Native display / brightness / DPMS | 🚧 | dual‑DSI ANA38401 panel; needs the ≥6.16 bonded‑cmd‑mode DPU fixes (6.18 tree staged) |
+| S Pen, Bluetooth, audio | ⬜ | not started |
 
-Samsung's ABL will not directly execute a mainline `Image`, and Samsung SM8150 has
-no `lk2nd` target. The community path is **Project Aloha** (`mu_aloha_platforms` /
-`DualBootKernelPatcher`): inject an SM8150 UEFI firmware volume into the **stock**
-Samsung boot kernel so ABL boots the stock container, which then chain‑loads UEFI
-→ `LinuxLoader` → Linux. Every earlier attempt fell back to stock Android because
-the boot image was repacked with a hand‑written packer that **destroyed the
-Samsung `SEANDROIDENFORCE`/AVB trailer** ABL requires. The fix is to use
-`magiskboot repack` (which preserves that trailer) and to pair the flash with a
-verification‑disabled `vbmeta`. See [`docs/BOOT_METHOD.md`](docs/BOOT_METHOD.md)
-and [`docs/DEVLOG.md`](docs/DEVLOG.md) for the full investigation.
+Read [`docs/PORT.md`](docs/PORT.md) for the full hardware map and
+[`docs/DEVLOG.md`](docs/DEVLOG.md) for the chronological story (what was tried, what
+failed, what hurt, what we learned).
+
+### The transferable methodology
+
+Every wall on this device fell to the same discipline, taken from the S20 port:
+
+1. **Never touch the bootloader display pipe.** simpledrm rides the framebuffer the
+   bootloader already set up; the desktop is GPU‑accelerated by a *render‑only* GPU
+   node (Adreno) paired to simpledrm via Mesa's kmsro. Enabling the real DSI/DPU
+   pipe corrupted scan‑out every time until a ≥6.16 kernel.
+2. **Keep a lifeline.** First a fastboot/cache‑ESP flash loop, then a root serial
+   console over USB ACM, then root SSH over USB RNDIS. Every risky change is made
+   over the lifeline, not by typing on the tablet.
+3. **One subsystem per boot, verify the artifact.** Build the `.dtb`/module, grep
+   the built artifact for the change *before* shipping it, `md5sum` before every
+   flash, and bring up exactly one thing at a time.
+4. **Read the device's own extracted device tree first.** The answers (panel
+   timings, touch protocol, Wi‑Fi supplies, firmware paths) were in Samsung's own
+   downstream DT, not upstream docs.
+
+## The boot problem, in one paragraph
+
+Samsung's ABL will not directly execute a mainline `Image`, and Samsung SM8150 has no
+`lk2nd` target. The working path is **Project Aloha** (`mu_aloha_platforms` /
+`DualBootKernelPatcher`): an SM8150 edk2/Project‑Mu UEFI firmware volume is injected
+into the **stock** Samsung boot kernel, so ABL boots the stock container which
+chain‑loads UEFI → its BDS scans FAT partitions for `\EFI\BOOT\BOOTAA64.EFI` →
+systemd‑boot → the mainline EFI‑stub `Image` + `gts6lwifi` DTB. Earlier attempts fell
+back to stock Android because the boot image was repacked with a packer that
+**destroyed the Samsung `SEANDROIDENFORCE`/AVB trailer** ABL requires; the fix is
+`magiskboot repack` (which preserves it) paired with a verification‑disabled
+`vbmeta`. See [`docs/BOOT_METHOD.md`](docs/BOOT_METHOD.md).
 
 ## Device facts
 
 ```text
 Model            SM-T860 (Wi-Fi), codename gts6lwifi
 SoC              Qualcomm SM8150P v2 / Snapdragon 855
-Active msm-id    0x169 / 0x20000     board-id 0x10008 / 0x00000002
 Stock firmware   T860XXS5DWH1 (Android 12, One UI 4.1), kernel 4.14.190
-Bootloader       unlocked, orange verified-boot state
-Boot chain       AArch64 XBL -> 32-bit ARM ABL -> boot (Android boot image v1)
-Display          ANA38401 / AMSA05RB06 WQXGA
-Boot partition   /dev/block/sda20, 64 MiB
+Bootloader       unlocked; Project Aloha SM8150 UEFI flashed to `boot` (sda20)
+Storage          128 GB UFS; Fedora root on userdata (sda30, ext4)
+Boot ESP         cache (sda27, FAT32) — systemd-boot + Image + DTB
+Display          dual-DSI ANA38401 / AMSA05RB06 WQXGA, 2560x1600
+Touch            STM FTS1BA90A (Samsung SEC-TS), i2c on QUP2 SE17
+GPU              Adreno 640
+Wi-Fi/BT         Qualcomm WCN3990 (ath10k_snoc / SNOC)
 ```
 
 ## Repo layout
 
 ```text
-docs/         Write-ups: DEVLOG (the full story), the boot method, the hardware
-              map/port status, and the AVB/boot-image format analysis.
-bootloader/   Project Aloha handoff: the build recipe, the packer/analysis tools,
-              and notes. Aloha UEFI/patcher are upstream; device firmware is not.
+docs/
+  DEVLOG.md         The full chronological story.
+  PORT.md           Hardware map and per-subsystem status.
+  BOOT_METHOD.md    Project Aloha SM8150 handoff, reproducible build.
+  AVB_ANALYSIS.md   Byte-level boot-image / AVB trailer analysis.
+  UFS.md            The lying-halt-bit clock fix that unlocked internal storage.
+  DISPLAY.md        simpledrm-on-bootloader-framebuffer strategy (and what NOT to do).
+  GPU.md            Adreno 640 render-only + Mesa kmsro bring-up.
+  TOUCH.md          fts1ba90a + GPI-DMA bring-up.
+  USB_NETWORKING.md The RNDIS+ACM lifeline (SSH + serial over USB).
+  WIFI.md           WCN3990 bring-up: how far it gets and the open blocker.
 kernel/
-  dts/        sm8150-samsung-gts6lwifi board device tree (mainline-style).
-  config/     Lean launch kernel .config.
-tools/        Boot-image AVB/trailer analyzers and the Odin tar packers.
-firmware/     How to extract SM8150/Samsung firmware from your own device. No blobs.
-rootfs/       Fedora + KDE Plasma userspace glue (planned).
+  dts/              sm8150-samsung-gts6lwifi board device tree.
+  config/           The kernel .config used for the running build.
+  patches/          Out-of-tree fixes (clock halt-skip, ath10k, etc.).
+tools/              Boot-image AVB/trailer analyzers and Odin tar packers.
+firmware/           How to extract SM8150/Samsung firmware from your OWN device. No blobs.
+rootfs/             Fedora + KDE Plasma userspace glue.
 ```
-
-## Where to start
-
-- [`docs/DEVLOG.md`](docs/DEVLOG.md) — chronological story: what was tried, what
-  failed, what hurt, what we learned.
-- [`docs/BOOT_METHOD.md`](docs/BOOT_METHOD.md) — the Project Aloha SM8150 handoff,
-  why Samsung ABL is special, and the exact reproducible build.
-- [`docs/AVB_ANALYSIS.md`](docs/AVB_ANALYSIS.md) — byte‑level Android boot header,
-  `UNCOMPRESSED_IMG` envelope, and AVB footer/vbmeta breakdown.
-- [`docs/PORT.md`](docs/PORT.md) — hardware map and per‑subsystem status.
 
 ## Safety
 
-Only ever write the `boot` and `vbmeta` partitions (and later a rootfs partition
-you choose). **Never** flash BL, XBL, ABL, TZ, modem, EFS, PIT, or repartition —
-Samsung KG/Knox and a wrong firmware write can hard‑brick. Keep a full stock Odin
+Only ever write the `boot`, `vbmeta`, and `cache` partitions (and the `userdata`
+rootfs you choose). **Never** flash BL, XBL, ABL, TZ, modem, EFS, PIT, or repartition
+— Samsung KG/Knox and a wrong firmware write can hard‑brick. Keep a full stock Odin
 restore on hand. Never publish `efs`, `sec_efs`, or IMEI/serial data.
 
 ## License
 
-Kernel/DTS/driver work is derived from Linux and is GPL‑2.0. Documentation is
-shared under the same repo license. Proprietary firmware is not included and is
-not covered.
+Kernel/DTS/driver work is derived from Linux and is GPL‑2.0. Documentation is shared
+under the same repo license. Proprietary firmware is not included and is not covered.

@@ -132,3 +132,51 @@ outcomes.
 Layer 1 (boot handoff) has a real, evidence‑backed candidate awaiting a device
 test. Layers 2 (mainline kernel + `gts6lwifi` DTB via UEFI LinuxLoader) and 3
 (Fedora + KDE Plasma) follow once ABL is crossed.
+
+---
+
+## Milestones after the boot handoff — the arc to a working desktop
+
+Layer 1 held: the Aloha UEFI candidate booted on real hardware and reached its
+fastboot screen, and systemd-boot on the cache ESP handed off to a mainline
+EFI-stub `Image` + `gts6lwifi` DTB. From there, one subsystem per boot:
+
+1. **BusyBox shell, then UFS storage.** First mainline boots reached a readable
+   shell but internal UFS refused to come up — the `core_clk` reported "stuck at
+   off". Root cause: the Aloha/Samsung TZ firmware *lies about clock halt-status
+   bits*. Fix: `BRANCH_HALT_SKIP` on the 18 UFS/USB branch clocks. Internal 128 GB
+   UFS came alive with all partitions. → [`UFS.md`](UFS.md)
+
+2. **Fedora 44 KDE installed on internal UFS.** Built the rootfs on a build host,
+   `fastboot flash userdata`, moved the boot ESP to the `cache` partition, boots
+   kernel → systemd → `graphical.target`.
+
+3. **The desktop became visible.** Black screen at first — KWin couldn't drive the
+   display. The winning move was to *never touch the bootloader display pipe*:
+   `simpledrm` on the framebuffer the bootloader already lit, `dispcc` disabled,
+   stock KWin. (A self-inflicted set of `KWIN_COMPOSE`/`LIBGL_ALWAYS_SOFTWARE` env
+   hacks had been the actual blocker.) → [`DISPLAY.md`](DISPLAY.md)
+
+4. **Multitouch.** STM `fts1ba90a` (Samsung SEC-TS protocol, not mainline `stmfts`),
+   plus the non-obvious requirement that the touch i2c bus is GSI-only and needs GPI
+   DMA enabled. → [`TOUCH.md`](TOUCH.md)
+
+5. **A development lifeline over USB.** RNDIS + ACM configfs gadget → root SSH and a
+   serial console over the USB cable. Kernel/DTB iteration then happens over SSH by
+   loop-mounting the cache ESP on the running tablet — no more fastboot for each
+   change. → [`USB_NETWORKING.md`](USB_NETWORKING.md)
+
+6. **GPU acceleration.** Adreno 640 as a render-only device paired to simpledrm via
+   Mesa's kmsro; four small kernel fixes (headless drm master, speed-bin fallback,
+   forced MMU, 64-bit DMA mask) and the device's own TZ-signed zap shader. The KDE
+   desktop is measurably GPU-composited. → [`GPU.md`](GPU.md)
+
+7. **Wi-Fi — in progress.** The WCN3990's firmware runs on the modem, so this meant
+   booting the mpss remoteproc, serving its EFS with `rmtfs`, and driving the full
+   ath10k QMI handshake — all of which *works* (it reads the real chip and firmware
+   version). The firmware then crashes on its own RF init; that last step is the open
+   blocker. → [`WIFI.md`](WIFI.md)
+
+**State:** a daily-drivable, GPU-accelerated, touch-capable Fedora KDE Plasma desktop
+on the Tab S6's internal storage, reachable over USB. Wi-Fi and the native display
+pipe (for brightness/DPMS) are the remaining subsystems. See [`PORT.md`](PORT.md).
