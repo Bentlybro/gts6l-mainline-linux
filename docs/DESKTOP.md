@@ -114,12 +114,65 @@ dbus-send --session --print-reply --dest=org.kde.KWin /VirtualKeyboard org.kde.k
 
 Then check `journalctl -b | grep -iE '\.qml|is not a type|Unable to assign'`.
 
-### Re-applying
+### Re-applying, and why "keep .orig copies" was not enough
 
 These files live under `/usr/lib64/maliit/keyboard2/`, so a package update overwrites
-them. Keep `.orig` copies. Changed: `qml/KeyboardContainer.qml`, `qml/keys/CharKey.qml`,
-`qml/keys/NavKey.qml`, the new `qml/keys/ModKey.qml` and `qml/keys/SeqKey.qml`,
-`qml/keys/qmldir`, and `languages/en/Keyboard_en.qml`.
+them. Changed: `qml/KeyboardContainer.qml`, `qml/keys/CharKey.qml`, `qml/keys/NavKey.qml`,
+the new `qml/keys/ModKey.qml` and `qml/keys/SeqKey.qml`, `qml/keys/qmldir`, and
+`languages/en/Keyboard_en.qml`.
+
+None of them are marked `%config`, so RPM replaces them **silently** — no warning, no
+`.rpmsave`, no `.rpmnew`. The advice used to be "keep `.orig` copies", which only helps
+if you happen to remember to check.
+
+A Plasma **6.6.4 → 6.7.4** upgrade proved the point. The keyboard survived only because
+maliit was not in that transaction; the lock screen did not, and reverted to stock:
+
+```
+$ stat -c %y .../lockscreen/LockScreenUi.qml
+2026-08-04 01:00:00        <- package build date, i.e. rpm replaced it
+$ grep -A2 onExited .../LockScreenUi.qml
+onExited: { uiVisible = false; }     <- our fix gone
+```
+
+Nothing announced it. The tablet would simply have gone back to a lock screen that
+cannot be dismissed by touch, at the next lock.
+
+So it is automated now. `tools/tabs6-desktop-patches.py`, run by
+`tabs6-desktop-patches.service` before `graphical.target` on every boot:
+
+- re-applies the lock screen touch fixes if the marker `TABS6-PATCHED` is absent,
+  keeping a `.stock` copy of whatever it replaced
+- restores the maliit files from a pristine stash in `/usr/local/share/tabs6/maliit/`
+  if the live ones differ
+
+Every change is checked before it is made, so it is safe to run repeatedly — a second
+run reports `everything already in place`. Verified by clobbering `ModKey.qml` with a
+placeholder and re-running: restored byte-identically.
+
+`qmldir` is the one to not forget. Without it the new key types are not registered as
+importable and the keyboard fails to load **entirely**, rather than just losing the
+extra row.
+
+### The lock screen fixes themselves
+
+Stock Plasma assumes a mouse. Three separate things break under a finger:
+
+| Stock behaviour | Why it fails on touch |
+|---|---|
+| `onPositionChanged: uiVisible = seenPositionChange` | the first interaction only arms a flag and reveals nothing; with a mouse you keep moving and it appears, with a finger you tap once and nothing happens |
+| `onExited: uiVisible = false` | lifting a finger counts as exiting, so the password box vanishes the moment you stop touching |
+| UI starts hidden | a locked tablet looks dead rather than locked |
+
+The fourth change is not cosmetic. Setting `uiVisible` from `Component.onCompleted` runs
+`onUiVisibleChanged` before the window exists, and `Window.window.requestActivate()` then
+throws — aborting the handler *before* `authenticator.startAuthenticating()`, which
+leaves the lock screen unable to accept a password at all. It is guarded with
+`if (uiVisible && Window.window)`.
+
+Related trap: adding a second `Component.onCompleted` to an element that already has one
+is a "Property value set multiple times" error, and Plasma's response is to silently fall
+back to the basic locker — which looks exactly like the patch having done nothing.
 
 ---
 
@@ -283,3 +336,93 @@ net.ipv6.conf.all.ignore_routes_with_linkdown = 1
 and move the gadget's default route to metric 1000, so Wi-Fi is preferred whenever it is
 up and USB remains a fallback. That is the right shape anyway: Wi-Fi for traffic, USB as
 the recovery lifeline.
+
+---
+
+## 6. The hardware buttons
+
+The PMIC PON block gives three keys, and `resin` is not self-describing, so
+decode the evdev bitmaps rather than guessing:
+
+| Device | Name | Bit | Key |
+|---|---|---|---|
+| `event0` | `pm8941_pwrkey` | 116 | `KEY_POWER` |
+| `event1` | `pm8941_resin` | 114 | `KEY_VOLUMEDOWN` |
+| `event2` | `gpio-keys` | 115 | `KEY_VOLUMEUP` |
+
+Volume **down** sits on the PON block next to the power key; volume **up** is a
+separate GPIO. Both PON keys are armed wake sources — see [SLEEP.md](SLEEP.md).
+
+`tools/tabs6-powerkeyd.py` owns them:
+
+| Input | Action |
+|---|---|
+| short press | lock the session, screen off |
+| next short press | screen on, at the lock screen |
+| long press (1.5 s) | Plasma's power menu |
+| **power + volume down** | screenshot to `~/Pictures/Screenshots/` |
+
+logind is `HandlePowerKey=ignore` and PowerDevil's button actions are off, so
+this daemon is the only thing acting on the key. If two things handle it, Plasma
+queues a logout prompt *behind* the lock screen and the tablet looks wedged.
+
+### The chord
+
+Both keys down within 0.6 s of each other, either order. `combo_fired` suppresses
+the lock and the power menu for that press, and clears only once **both** keys
+are up — otherwise releasing volume down first lets the still-held power key act
+alone and lock the screen right after the shot.
+
+The keys are read, never grabbed (`EVIOCGRAB`), so KWin still sees them and normal
+handling is untouched. The cost is that the volume-down half also registers as a
+volume press. There is no audio on this port yet so it currently does nothing;
+the fix, if it ever matters, is to grab `resin` and re-emit lone presses through
+uinput — a lot of machinery for a small annoyance.
+
+### Four bugs worth knowing about, none of which a button-press would reveal
+
+**Sample the screen state on the key DOWN, never the release.** Because the
+device is not grabbed, KWin sees the same press and lights the panel immediately.
+By the time the key comes up, DPMS reads `On` even for a blank we did not perform
+— so pressing power to wake a screen that PowerDevil's idle timeout blanked would
+light it, then lock and re-blank it 0.8 s later. `soft_sleep` does not cover this:
+it is only ever set by our own short press, so it is `False` for any blank we did
+not cause. Latch `is_asleep()` on the press and use that at release.
+
+**Spectacle is `KDBusService::Unique`.** If an instance is already running, the
+process you spawn hands its argv to that instance and exits **0 immediately**,
+while the capture happens asynchronously over there. So an instantaneous
+`os.path.exists()` check reports failure on a screenshot that is about to
+succeed — and a retry ladder then fires *another* capture, and another. Worse,
+`SpectacleCore::activate()` calls `deleteWindows()` whenever argv carries
+options, so the chord destroys any Spectacle window you had open. Lead with
+`--new-instance`, wait for the file with a deadline rather than a single stat,
+and stop the ladder as soon as an invocation is *accepted* (exit 0) rather than
+when a file appears.
+
+For the record, KWin authorisation is **not** a problem here and the launch path
+does not matter: `fetchRestrictedDBusInterfacesFromPid()` resolves
+`/proc/<pid>/exe` and matches it against desktop-file `Exec` entries, and the
+D-Bus caller is the exec'd `/usr/bin/spectacle` itself. Going through
+`runuser -u fedora -- env ... spectacle` from a root daemon is authorised exactly
+as a launcher-started Spectacle is.
+
+**A dead input device busy-loops the daemon.** epoll reports `EPOLLHUP`/`EPOLLERR`
+unconditionally — they are not maskable — and `selectors` turns those into
+`EVENT_READ`. So once an evdev node goes away, `select()` returns that fd ready on
+*every* iteration and `os.read()` raises `ENODEV` forever. Logging and continuing
+pegs a core and forks `logger` in a tight loop, on a battery-powered tablet.
+Unregister and close the fd; if it was the power key, exit and let systemd restart
+and re-resolve the node (which needs `Restart=always` with `StartLimitBurst=0`).
+
+**Chording while the screen is blanked leaves `soft_sleep` stale.** The chord
+suppresses `do_short_press()`, which is the only place the flag is cleared — but
+KWin still lights the panel. The flag then says "off" while the panel is on, and
+`is_asleep()` short-circuits on it, so the next deliberate power press is
+swallowed as a wake instead of locking. The tablet sits unlocked and needs two
+presses. Reconcile the flag in the chord handler.
+
+Those came out of an adversarial review pass: 28 candidate findings, 4 survived
+refutation. All four are in the "would look like flaky hardware" category rather
+than the "obvious on first use" category, which is exactly the kind worth writing
+down.

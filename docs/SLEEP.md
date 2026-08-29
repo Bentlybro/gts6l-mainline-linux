@@ -259,9 +259,37 @@ visible, which is what it looks like when testing.
 
     4080000.remoteproc                       enabled
     alarmtimer.0.auto                        enabled
-    c440000.spmi:pmic@0:pon@800:pwrkey       enabled
-    c440000.spmi:pmic@0:pon@800:resin        enabled
+    c440000.spmi:pmic@0:pon@800:pwrkey       enabled   <- lock button
+    c440000.spmi:pmic@0:pon@800:resin        enabled   <- volume down
     c440000.spmi:pmic@0:rtc@6000             enabled
+
+### Tapping the screen will not wake it — press the lock button
+
+This is by design, not a gap. The touchscreen has no wakeup entry at all:
+
+    /sys/bus/i2c/devices/4-0049/power/wakeup    <- does not exist
+
+and `fts1ba90a_suspend()` calls `fts1ba90a_power_off()`, which drops the
+controller's regulators. It is powered down, so it cannot signal anything. Use
+the **lock button** (volume down also works, since `resin` is armed too).
+
+Waking it costs a little more than it looks: the resume path power-cycles and
+re-initialises the controller, which is why `no echo for cmd a0 (ignored)` shows
+up in the log on every wake.
+
+### Which key is which
+
+`resin` is not self-describing, so decode the evdev key bitmaps rather than
+assuming:
+
+    event0  pm8941_pwrkey   KEY=10000000000000  -> bit 116  KEY_POWER
+    event1  pm8941_resin    KEY= 4000000000000  -> bit 114  KEY_VOLUMEDOWN
+    event2  gpio-keys       KEY= 8000000000000  -> bit 115  KEY_VOLUMEUP
+
+Volume **down** sits on the PMIC PON block next to the power key; volume **up**
+is a separate GPIO. That is what makes an Android-style power+volume-down
+screenshot chord easy — both halves are PMIC keys `tabs6-powerkeyd` already
+reads. See [DESKTOP.md](DESKTOP.md).
 
 Because s2idle is a light sleep and the network stays armed, an active SSH
 session or other traffic will wake the tablet almost immediately. That is not a
