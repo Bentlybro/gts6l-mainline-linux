@@ -133,6 +133,8 @@ docs/
   TOUCH.md          fts1ba90a + GPI-DMA bring-up.
   USB_NETWORKING.md The RNDIS+ACM lifeline (SSH + serial over USB).
   WIFI.md           WCN3990 bring-up: modem boot, ath10k QMI, and the wlan_mem fix.
+  DESKTOP.md        Making it usable: on-screen keyboard with real modifier keys,
+                    zram, touch text selection, Electron/Wayland, routing.
 kernel/
   dts/              sm8150-samsung-gts6lwifi board device tree.
   config/           The kernel .config used for the running build.

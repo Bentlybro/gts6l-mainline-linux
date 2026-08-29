@@ -96,7 +96,27 @@ they need anything the other subsystems did not.
 - **simpledrm is fixed-mode** — reconfiguring resolution/scale hard-crashes the SoC.
 - The stock kernel config here shipped **without `CONFIG_ZRAM`**, so Fedora's
   zram-generator silently produced no swap at all. On a 4.8 GiB device that hurts;
-  enabling ZRAM/ZSWAP and configuring zstd-compressed swap is worth doing early.
+  enabling ZRAM/ZSWAP and configuring zstd-compressed swap is worth doing early. Note
+  that Kconfig **force-selects LZO** (`CONFIG_ZRAM_BACKEND_FORCE_LZO`) when no backend
+  is picked explicitly, so `compression-algorithm = zstd` then quietly falls back to
+  lzo-rle — enable `CONFIG_ZRAM_BACKEND_ZSTD` and confirm with
+  `cat /sys/block/zram0/comp_algorithm` (the active one is in `[brackets]`).
+- **The ESP cannot be mounted directly**, which matters because every kernel update
+  goes through it. `mount /dev/sda27` fails with *"FAT-fs: logical sector size too
+  small for device (logical sector size = 512)"*: the filesystem was created with
+  512-byte logical sectors and UFS reports 4096, a combination the FAT driver refuses.
+  Go through a loop device, which presents 512-byte sectors regardless — and always
+  with a cleanup trap, because a stale loop device on the ESP will leave the tablet
+  wedged mid-shutdown, unable to remount `/` read-only:
+
+  ```bash
+  LOOP=$(losetup -f --show /dev/sda27); mount "$LOOP" /mnt/esp
+  ...; umount /mnt/esp; losetup -d "$LOOP"
+  ```
+
+  The ESP filesystem is also only 95 MB even though the cache partition is 400 MB, and
+  the kernel `Image` alone is ~38 MB — there is room for one Image and little else, so
+  keep the rollback copy off the ESP.
 - **SPMI PMIC children are not instantiated** unless `MFD_SPMI_PMIC` is enabled. The
   PMICs enumerate on the bus regardless, which makes it look like SPMI is fine while
   every PMIC function (ADC, battery, RTC) is silently absent.
