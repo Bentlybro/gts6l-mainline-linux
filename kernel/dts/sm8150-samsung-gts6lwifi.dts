@@ -933,3 +933,23 @@
 	status = "okay";
 	clock-frequency = <400000>;
 };
+
+/*
+ * The PMIC RTC counter CANNOT be set on this device. Do not add
+ * allow-set-time here - it was tried, and it makes things worse.
+ *
+ * Without it rtc-pm8xxx takes the nvmem offset path and returns -ENODEV
+ * immediately, quietly. With it the driver goes on to write the counter,
+ * and the SPMI arbiter refuses the transaction outright:
+ *
+ *     spmi spmi-0: disallowed SPMI write to sid=0, addr=0x6046
+ *
+ * 0x6046 is the RTC control register and the firmware owns write access,
+ * the same ownership wall that keeps pm8150b off limits. Because
+ * CONFIG_RTC_SYSTOHC=y points at rtc0, the kernel retries this every 11
+ * minutes forever - 602 denied writes in the first 122 seconds of the one
+ * boot it was enabled for.
+ *
+ * Reading the RTC works, and alarms work, which is what suspend/resume
+ * needs. Wall clock time comes from systemd-timesyncd instead.
+ */

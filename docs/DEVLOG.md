@@ -785,3 +785,47 @@ probably the honest summary of the whole port. [`PORT.md`](PORT.md) has the full
 map; the per-subsystem documents linked from each chapter have the detail. Patches and
 reference data are still welcome, particularly from anyone who has driven this panel's
 T-CON natively.
+
+---
+
+## Postscript: sleep
+
+Suspend was the last thing standing between this and a tablet you could close and put in a
+bag. The kernel side had quietly worked for a while — `rtcwake` suspended and resumed
+without complaint — so the failure was somewhere above it, and it took three wrong guesses
+to find.
+
+The first was a red herring in our own driver. Every wake logged
+`fts1ba90a: resume: ready wait failed: -110`, which reads like a dead touchscreen. It was
+not: `resume()` had drifted from `probe()` and was waiting for a ready event that the
+controller only ever posts in response to a reset, so it timed out for three seconds and
+then ignored the result. Deleting the wait made resume match probe, and made every wake
+three seconds faster. The error was real, ours, and almost entirely beside the point.
+
+The second was the clock. `rtc-efi` had claimed `rtc0` and could not be read at all, which
+broke `timedatectl` outright rather than merely reporting a wrong time; compiling it out
+hands `rtc0` to the PMIC RTC and fixes that. Setting the RTC, though, is simply not
+possible — the SPMI arbiter refuses writes to the control register, the same firmware
+ownership boundary that keeps the pm8150b charger closed. Enabling `allow-set-time` gets far
+enough to prove it and then costs 602 denied SPMI writes in two minutes, because the kernel
+retries every 11 minutes forever, so it was reverted with the reasoning left in the DTS.
+systemd's timesync file makes the whole question academic: the clock is wrong for 0.16 s of
+boot and correct thereafter.
+
+The actual blocker was one line of distribution policy. Fedora ships `sleep.target` and
+`suspend.target` **masked**, so logind answered `CanSuspend -> no` and every desktop path
+gave up silently — while `systemctl suspend` reported "Access denied", which sends you
+hunting through polkit and seats for an hour. Unmasking them fixed suspend everywhere.
+
+That left idle sleep, which still would not fire, because PowerDevil ignores its profile
+configuration on this machine entirely — three different file-and-group layouts, all
+ignored, and setting `dimDisplayWhenIdle=false` does not even stop the dim action
+registering. logind's own `IdleAction` cannot substitute, since it depends on a session idle
+hint that KWin never sets. So idleness is measured directly off the evdev nodes instead, by
+`tabs6-idled`, which is a smaller and more honest thing to depend on: if no input device has
+produced an event, nobody is using the tablet.
+
+It works. With the threshold turned down for testing, the tablet went idle, suspended, and
+vanished from the network entirely — the gateway reporting the host unreachable, because
+with Wi-Fi down there was nothing left to wake it. The power button brings it back.
+[`SLEEP.md`](SLEEP.md) has the detail.

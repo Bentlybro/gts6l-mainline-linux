@@ -1,0 +1,20 @@
+--- a/drivers/input/touchscreen/fts1ba90a.c
++++ b/drivers/input/touchscreen/fts1ba90a.c
+@@ -580,10 +580,13 @@
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = fts1ba90a_wait_for_ready(ts);
+-	if (ret < 0)
+-		dev_err(dev, "resume: ready wait failed: %d\n", ret);
+-
++	/*
++	 * Deliberately no bare wait_for_ready() here. probe() does not do
++	 * one either: the controller does not post a ready event merely
++	 * because the rails came back, it posts one in response to the
++	 * reset below. Waiting first only burned FTS_RETRY_COUNT * 15 *
++	 * 20ms of resume time on an -ETIMEDOUT that was then ignored.
++	 */
+ 	ret = fts1ba90a_system_reset(ts);
+ 	if (ret == 0)
+ 		ret = fts1ba90a_configure(ts, false);

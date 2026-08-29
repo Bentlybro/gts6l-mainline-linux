@@ -60,6 +60,7 @@ SoC brought up.
 | Power button, shutdown, reboot | ✅ | power key is the PMIC PON block, not a GPIO; power‑off and reboot go through PMIC `PS_HOLD` because **PSCI `SYSTEM_OFF`/`SYSTEM_RESET` both hang on this firmware** — see [`docs/POWER.md`](docs/POWER.md) |
 | Fuel gauge + charge detection | ✅ | the battery is not on the Qualcomm PMIC at all — Samsung fits an **SM5705** charger + fuel gauge + MUIC on I²C. Driver written from scratch: real state of charge, voltage, OCV and current, so charging is detected properly |
 | USB host — keyboard, SSD, hub | ✅ | dual‑role port with a runtime `usb-role` switch, VBUS sourced from the SM5705 boost. A 4 TB bus‑powered SSD runs off it — at USB 2.0; SuperSpeed is still unsolved, see [`docs/USB_HOST.md`](docs/USB_HOST.md) |
+| Suspend / resume / idle sleep | ✅ | s2idle works, touchscreen survives it, power button wakes. Fedora ships `sleep.target`/`suspend.target` **masked**, which makes logind report "Access denied"; and PowerDevil ignores its profile config entirely, so idle sleep is handled by `tools/tabs6-idled.py` — see [`docs/SLEEP.md`](docs/SLEEP.md) |
 | S Pen, Bluetooth, audio | ⬜ | not started |
 
 Read [`docs/PORT.md`](docs/PORT.md) for the full hardware map and
@@ -144,6 +145,9 @@ docs/
                     how to measure power without fooling yourself.
   POWER.md          Power button, shutdown and reboot: why PSCI cannot be used
                     here, and why the console lies about it.
+  SLEEP.md          Suspend, wake and the clock: the masked sleep targets, the
+                    touchscreen resume fix, why the RTC cannot be set, and why
+                    idle sleep is not PowerDevil's job here.
 kernel/
   dts/              sm8150-samsung-gts6lwifi board device tree.
   config/           The kernel .config used for the running build.
