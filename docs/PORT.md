@@ -32,6 +32,7 @@ the cache ESP on the running tablet. See [`BOOT_METHOD.md`](BOOT_METHOD.md).
 | GPI DMA (QUP2) | `0xc00000` | **must be enabled** — SE17 is GSI-only |
 | WCN3990 Wi-Fi | `0x18800000` | ath10k_snoc / SNOC — see [`WIFI.md`](WIFI.md) |
 | mpss remoteproc (modem Q6) | `0x4080000` | hosts the WLAN firmware (PAS) |
+| WLAN MSA (`wlan_mem`) | `0xc0000000` | 1 MB, moved into HLOS-owned DDR; the `sm8150.dtsi` default at `0x8bc00000` is Samsung's firmware-owned `pil_wlan_fw_region` |
 
 > **Correction from earlier notes:** the Wi-Fi is a **WCN3990** at `0x18800000`
 > (ath10k_snoc), *not* a QCA6390 at `0xa0000000`. The `0xa0000000` `qcom,wil6210`/
@@ -54,11 +55,24 @@ DSC (from the device's downstream panel node).
 | Multitouch | ✅ | fts1ba90a + GPI-DMA — [`TOUCH.md`](TOUCH.md) |
 | Adreno 640 GPU acceleration | ✅ | render-only + Mesa kmsro — [`GPU.md`](GPU.md) |
 | Fedora 44 + KDE Plasma on UFS | ✅ | Wayland session, autologin |
-| Wi-Fi (WCN3990) | 🚧 | modem + QMI handshake work; fw crashes on RF init — [`WIFI.md`](WIFI.md) |
+| Wi-Fi (WCN3990) | ✅ | 802.11ac, 866.7 MBit/s link (VHT-MCS 9, 80 MHz, 2 streams); auto-connects at boot — [`WIFI.md`](WIFI.md) |
 | Native display / brightness / DPMS | 🚧 | needs ≥6.16 bonded-cmd-mode DPU; 6.18 tree staged |
 | S Pen (Wacom W9021) | ⬜ | wacom@0x56 on i2c14, irq gpio 5, pdct 53, fwe 11 |
 | Bluetooth (WCN3990 UART) | ⬜ | |
 | Audio | ⬜ | |
+
+Current state: the tablet is a self-sufficient machine. It boots from its own internal
+storage into Fedora 44 + KDE Plasma with working touch, GPU acceleration and its own
+Wi-Fi, and it is reachable over SSH without the USB lifeline attached. Wi-Fi needs no
+driver patch — the fix was a single device-tree line relocating `wlan_mem` into DDR that
+HLOS actually owns, after which stock mainline `ath10k_snoc` completes the QMI handshake
+and `wlan0` comes up.
+
+The only subsystem still in progress is the native display pipe: DPU/DSI driving the
+ANA38401 panel directly, which is what brightness control and DPMS depend on. Until that
+lands the panel stays at the bootloader's fixed backlight level and never blanks. S Pen,
+Bluetooth and audio are not started rather than blocked — nothing found so far suggests
+they need anything the other subsystems did not.
 
 ## Lessons carried from the S20 (`z3s`) project (all held true here)
 
@@ -81,3 +95,14 @@ DSC (from the device's downstream panel node).
 - **simpledrm is fixed-mode** — reconfiguring resolution/scale hard-crashes the SoC.
 - This **bootloader clears/retrains DDR on reboot** — persistent-RAM crash capture
   (ramoops) does not survive, which complicates debugging hard SoC locks.
+- **A `reserved-memory` region inherited from `sm8150.dtsi` may sit in memory the
+  firmware owns, not HLOS.** `qcom_scm_assign_mem()` then returns `-22` (EINVAL),
+  because HLOS cannot grant away memory it does not hold. Check the address against
+  Samsung's own memory map before assuming the inherited default is usable, and fix it
+  by relocating the region into ordinary DDR rather than by working around the failed
+  assign. This bit us twice: first `rmtfs_mem`, fixed at `0x89b00000` inside a
+  Samsung-owned range (made dynamic instead), and then the WLAN MSA `wlan_mem` at
+  `0x8bc00000`, which is Samsung's `pil_wlan_fw_region` (moved to `0xc0000000`). The
+  second case was near-silent: skipping the grant left the hardware unpermitted on its
+  own shared memory, and the firmware's first write during RF calibration took the SoC
+  fabric down in about 29 ms with no ramdump and no log.

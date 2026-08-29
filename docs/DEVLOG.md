@@ -535,7 +535,7 @@ does not, and we have not explained that yet. The next real step is to read the 
 off the screen, which names the faulting function; without it we are guessing, and guessing here
 means bricking the tablet and reflashing each time.
 
-## Current status, honestly
+## Status as it stood before the answer
 
 None of the open problems touches the rest of the tablet. What runs today is a daily-drivable,
 GPU-accelerated Fedora 44 KDE Plasma desktop on the Tab S6's own internal UFS storage, at
@@ -599,3 +599,189 @@ Open: the Samsung HL.3.2.0.c3-00910 WLAN PD hangs driving the radio with every
 host variable matched to Samsung's own device tree. Next candidates: find a
 newer SM8150-class wlanmdsp that still pairs with Samsung board data, or
 upstream help. See the capture at 04_build/netconsole-capture.log.
+
+## Wi-Fi: the memory that was never ours to give away
+
+It works.
+
+Later the same day, the tablet associated to a WPA2 access point on 5 GHz under mainline
+6.12, took a DHCP lease, pinged its gateway three for three and 1.1.1.1 three for three
+with zero loss, and fetched an HTTPS page that came back HTTP 200 with real content in
+it. The link negotiated 866.7 MBit/s - VHT-MCS 9, 80 MHz wide, two spatial streams,
+which is 802.11ac at full width - at a signal between -36 and -42 dBm. It comes up by
+itself on boot with no manual steps, and the tablet is now reachable over SSH across its
+own radio instead of the USB cable. Nothing in the kernel was patched to get there: the
+final configuration runs stock mainline `ath10k_snoc` code paths.
+
+The whole fix is one line of device tree:
+
+```text
+&wlan_mem {
+        reg = <0x0 0xc0000000 0x0 0x100000>;
+};
+```
+
+Move the WLAN shared-memory region to an address the operating system actually owns.
+That is it. Everything below is the story of how long it took to be able to write that
+line, and why every symptom we chased for weeks was downstream of it.
+
+The first thing to understand about this radio is that its firmware does not run on the
+tablet's application processor at all. The WCN3990 is driven by mainline's `ath10k_snoc`,
+but the code it executes lives on the modem - the same Q6/mpss processor that runs the
+cellular baseband on phones - inside a protection domain. Nothing about Wi-Fi can happen
+until the modem is up. Getting a Samsung modem up under mainline was its own project: the
+PAS remoteproc path, Samsung's own signed `modem.mdt` and its segments lifted off the
+tablet's firmware partition, `mpss_mem` extended to `0xa000000` because the 2023 image is
+larger than any device tree we could find declares and its own ELF program headers say so,
+`rmtfs` in userspace serving the modem its EFS, and `tqftpserv` answering its file
+requests. With all of that in place the modem boots and brings up its WLAN protection
+domain, and the `wlfw` service appears on the QMI bus.
+
+`rmtfs` is where the answer was hiding in plain sight, months early. Its fixed memory
+region at `0x89b00000` would not assign, and the reason was that the address sits inside
+memory Samsung's firmware owns. We made the region dynamic, it worked, and we wrote it
+down as a Samsung quirk and moved on. It was not a quirk. It was the bug, seen once and
+not recognised as a pattern.
+
+The Wi-Fi failure looked nothing like a memory-ownership problem. The QMI handshake would
+run to completion - the driver reading the real chip id and the real firmware version off
+the hardware - and then the entire SoC would stop. Not a kernel panic, not a firmware
+crash the system survives: a total fabric lock, in as little as 29 ms, with no ramdump, no
+error path, and nothing in any log. Even after netconsole gave us live streaming of the
+kernel log, the lock beat the last packet out. We were debugging a machine that vanished
+mid-sentence.
+
+So we bisected the QMI sequence itself. Module parameters let us build a clean
+four-quadrant experiment - board-data download on or off, calibration report on or off -
+and the result was unambiguous: `QMI_WLFW_CAL_REPORT_REQ_V01` alone was necessary and
+sufficient to kill the SoC, and the board-data push was innocent. For several days we
+believed we had found the culprit. We had not. We had found the first thing that touched
+the poisoned memory.
+
+The next move was to read Samsung's own driver rather than guess at it. Downstream does
+not use `ath10k` at all; it uses `icnss`, and `icnss` sends no `host_cap`, no
+`BDF_DOWNLOAD` and no `CAL_REPORT` whatsoever. So we made mainline match that sequence
+exactly. The modem stayed alive - the lock was gone - and the firmware never reached
+`FW_READY`. That was the important negative result: the calibration step is not optional
+decoration that downstream skips, it is something this firmware genuinely requires. We
+could not route around `cal_report`. We had to make it safe.
+
+Which left exactly one thing that Samsung's stack does and ours did not. `ath10k` asks
+TrustZone to grant the WLAN hardware read/write access to the MSA - the shared memory
+window the firmware works in - through `qcom_scm_assign_mem()`. On this tablet that call
+had always returned -22, `EINVAL`, and long ago we had papered over it with the
+`qcom,msa-fixed-perm` device-tree flag, which tells the driver to skip the assign
+entirely and trust that the firmware has already set the permissions. That is a real and
+correct pattern on some locked-down devices, and it looked defensible. Downstream,
+though, performs the assign for real, and it succeeds. Why would the identical call fail
+for us and work for Samsung?
+
+Because of the address. Our `wlan_mem` was inherited straight from `sm8150.dtsi` at
+`0x8bc00000`, and in Samsung's own memory map that address is `pil_wlan_fw_region` -
+memory belonging to the firmware loader, not to the high-level OS. TrustZone was not
+being obstructive. It was refusing, correctly, to let HLOS give away memory HLOS does not
+own. And with the refusal skipped by `qcom,msa-fixed-perm`, the WLAN hardware had no
+permission on its own shared memory. `cal_report` then instructed the firmware to run a
+cold-boot RF calibration, whose results are written into the MSA. That first write landed
+on ungranted memory, faulted at the bus and XPU level below anything the kernel can see or
+report, and took the fabric down instantly. Every single symptom - the -22, the
+fixed-perm workaround, the calibration step looking guilty, the silence of the crash -
+came from one wrong base address.
+
+Hence the one line. `0xc0000000` sits inside the large System RAM block and is clear of
+every firmware carveout, so HLOS genuinely owns it. The size, `0x100000`, is not a guess
+either: one megabyte is both `ath10k`'s own `.msa_size` hardware parameter and Samsung's
+downstream `qcom,wlan-msa-memory`. The 1.5 MB we had been quoting all along was simply the
+size of the carveout we were wrongly pointing at. With the region moved,
+`qcom,msa-fixed-perm` is no longer needed and was deleted; the standard `iommus` and
+`memory-region` properties from `sm8150.dtsi` are kept as-is; the permission assign
+returns 0; `cal_report` is harmless; `FW_READY` arrives; `wlan0` appears.
+
+There was one experiment along the way that nearly told us the answer and got dismissed.
+Deleting `memory-region` entirely makes `ath10k` allocate the MSA itself with
+`dmam_alloc_coherent`, and that produced the first `FW_READY` this project had ever seen -
+because self-allocated memory is, of course, memory HLOS owns. But it is incompatible
+with the SMMU: self-allocation hands back an IOVA, and the modem-side firmware only
+accepts physical addresses, so it answers `msa info req rejected: 68`. The fixed,
+HLOS-owned carveout is the configuration that satisfies all three constraints at once - a
+physical address, real HLOS ownership, and SMMU translation for the copy-engine and HTT
+DMA rings.
+
+With the memory right, the rest of the node is unremarkable. The final `&wifi` is status
+plus four supplies:
+
+```text
+&wifi {
+        status = "okay";
+        vdd-0.8-cx-mx-supply = <&vreg_l1a_0p75>;   /* 752 mV */
+        vdd-1.8-xo-supply    = <&vreg_l7a_1p8>;
+        vdd-1.3-rfa-supply   = <&vreg_l2c_1p3>;    /* 1.304 V */
+        vdd-3.3-ch0-supply   = <&vreg_l11c_3p3>;   /* 3.312 V, pinned and always-on */
+};
+```
+
+There is no ch1 rail on this board, so the driver's dummy-regulator warning for it is
+benign and can be ignored.
+
+Userspace has a few sharp edges worth recording. `rmtfs` runs as `rmtfs -P -s`, in
+partition mode: `-o` forces file mode and fails here, and `-r` fails to obtain an rprocfd.
+Exactly one instance may run, or the qrtr binds collide. `tqftpserv` is built from
+linux-msm. Kernel 6.12 has an in-kernel `qcom_pd_mapper`, so the userspace pd-mapper is
+redundant and should not be started. All of it is wired into a `tabs6-wifi.service`
+systemd unit that boots the modem and brings up `ath10k` automatically, which is why the
+tablet simply has Wi-Fi when it powers on.
+
+The firmware itself came off the device's own partitions and stays there: `modem.mdt` and
+its segments from the Android boot partition's image directory, `wlanmdsp.mbn` from
+vendor's firmware directory, and `bdwlan.bin` repacked into an `ath10k` `board-2.bin` with
+`ath10k-bdencoder` under `bus=snoc,qmi-board-id=ff,qmi-chip-id=30224`. None of it is in
+this repository and none of it is redistributable.
+
+Things that are now definitively ruled out, so nobody repeats them: interconnect and NoC
+bandwidth votes (`ath10k_snoc` has no interconnect code on any device, and Samsung does not
+vote for WLAN either); MSA size as a variable (1 MB against 1.5 MB was tested, and 1 MB
+alone, at the wrong address, was actually worse); `host_cap` with `cal_done=1`; the
+`PIN_CONNECT_RESULT` indication, which mainline defines but this firmware never emits; XO
+calibration data, which Samsung's device tree does not carry either; and all three bdwlan
+board-data revisions plus the generic linux-firmware board data, which behave identically
+because none of them were ever the problem.
+
+One cosmetic issue remains: the kernel log spams `chan info: invalid frequency 0 (idx 41
+out of bounds)`. It is harmless. Both bands scan and associate correctly.
+
+The transferable lesson is short, and it is the one thing to carry off this device onto any
+other Qualcomm platform with a locked-down TrustZone. Before you try to grant a peripheral
+permission on a memory region, check who owns that region. A `qcom_scm_assign_mem()`
+returning -22 is not a quirk to be flagged around; it is TrustZone telling you, correctly,
+that the memory is not yours to give away. The SoC-level flags that exist to skip the
+assign are for regions whose permissions really were set up for you in advance, and using
+one to silence an ownership error converts a clean, immediate, well-labelled refusal into a
+silent hardware fault that will take the whole machine down later, somewhere else,
+invisibly. We had already met this exact bug once, in `rmtfs`, and treated it as a local
+oddity. Recognising it the second time is what solved Wi-Fi. The full forensic account is in
+[`WIFI.md`](WIFI.md).
+
+## Current status, honestly
+
+What runs today is a daily-drivable, GPU-accelerated Fedora 44 KDE Plasma desktop on the
+Tab S6's own internal UFS storage, at 2560x1600, with calibrated multitouch and an
+on-screen keyboard, and with working 802.11ac Wi-Fi that connects on boot and carries SSH.
+There is no Android anywhere in the boot chain. The boot handoff is solved and
+reproducible; the mainline kernel brings up the SoC, storage, the display scanout, touch,
+USB, the GPU and the radio; Fedora is installed and autologs into a Wayland session. The
+USB-networking lifeline is still there as a fallback, but it is no longer the only way in.
+
+Four things are open. The **native display pipe** has all its pieces built - the
+vendor-exact ANA38401 driver, the dual-DSI wiring, the clock-hold pattern, the RCG fix -
+and a 6.18 kernel with the bonded-command-mode fixes staged, but the daily driver
+deliberately rides the bootloader's framebuffer through simpledrm instead; finishing the
+native pipe is what would give brightness and DPMS control, and nothing else depends on it.
+**S Pen**, **Bluetooth** and **audio** are not started.
+
+The two problems that defined this project for months - getting past Samsung's ABL, and
+getting the WCN3990 to talk - are both closed, and in both cases the answer turned out to be
+one small piece of state that had been misread rather than a missing driver. That is
+probably the honest summary of the whole port. [`PORT.md`](PORT.md) has the full hardware
+map; the per-subsystem documents linked from each chapter have the detail. Patches and
+reference data are still welcome, particularly from anyone who has driven this panel's
+T-CON natively.

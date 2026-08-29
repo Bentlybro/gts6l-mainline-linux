@@ -5,15 +5,15 @@ natively** on the Samsung Galaxy Tab S6 Wi‑Fi (SM‑T860, codename `gts6lwifi`
 Qualcomm **SM8150** / Snapdragon 855). Installed on the internal UFS. Not an Android
 chroot, not a container, not postmarketOS‑as‑a‑dependency — a hand‑integrated
 mainline kernel driving a real desktop userspace, with **GPU acceleration, working
-multitouch, and a USB‑networking lifeline**.
+multitouch, working Wi‑Fi, and a USB‑networking lifeline**.
 
 This repository is the **shareable, reproducible subset** of that project: the boot
 method, the device tree and kernel work, per‑subsystem bring‑up guides, packaging
 and analysis tooling, and the full technical write‑ups. Samsung's SM8150 tablets
 have no turn‑key mainline path, and several of the walls here (the locked ABL boot
 handoff, a UFS clock that lies about being off, a display pipe you must **not**
-touch, a Wi‑Fi firmware that hard‑locks the SoC) cost real time — this exists so the
-next person doesn't repeat them.
+touch, a Wi‑Fi carveout pointed at firmware‑owned memory that hard‑locked the whole
+SoC) cost real time — this exists so the next person doesn't repeat them.
 
 > **Sister project:** the Galaxy S20 Ultra (`z3s`, Exynos 990) reached a full
 > GPU‑accelerated KDE Plasma desktop first. The *methodology* transfers (stock DT
@@ -31,9 +31,12 @@ is deliberately aggressive about this.
 
 ## Current status — honest
 
-A **daily‑drivable desktop is up**, with two subsystems still open (Wi‑Fi, native
-display/brightness). The project has three layers; **layers 1 and 3 are done and
-layer 2 is a working mainline kernel** with most of the SoC brought up.
+A **daily‑drivable desktop is up**, and as of 2026‑08‑29 it is on the network over
+its own Wi‑Fi. One subsystem remains open: the **native display pipe** (and with it
+panel brightness and DPMS), which needs kernel fixes newer than the 6.12 tree in use.
+S Pen, Bluetooth and audio have not been started. The project has three layers;
+**layers 1 and 3 are done and layer 2 is a working mainline kernel** with most of the
+SoC brought up.
 
 | Layer | Goal | Status |
 |---|---|---|
@@ -51,7 +54,7 @@ layer 2 is a working mainline kernel** with most of the SoC brought up.
 | Multitouch | ✅ | STM `fts1ba90a` (Samsung SEC‑TS protocol), GPI‑DMA on QUP2 |
 | GPU acceleration | ✅ | Adreno 640 render‑only via `msm`/freedreno, Mesa kmsro pairs it with simpledrm; Samsung‑signed zap shader |
 | USB networking + SSH | ✅ | RNDIS+ACM configfs gadget → root SSH over USB (the dev lifeline) |
-| Wi‑Fi (WCN3990) | 🚧 | modem + full ath10k QMI handshake work; fw crashes on RF init — see [`docs/WIFI.md`](docs/WIFI.md) |
+| Wi‑Fi (WCN3990) | ✅ | 802.11ac, 866.7 MBit/s link rate (VHT‑MCS 9, 80 MHz, 2 streams), auto‑connects at boot; fixed by relocating `wlan_mem` into HLOS‑owned DDR — see [`docs/WIFI.md`](docs/WIFI.md) |
 | Native display / brightness / DPMS | 🚧 | dual‑DSI ANA38401 panel; needs the ≥6.16 bonded‑cmd‑mode DPU fixes (6.18 tree staged) |
 | S Pen, Bluetooth, audio | ⬜ | not started |
 
@@ -76,6 +79,16 @@ Every wall on this device fell to the same discipline, taken from the S20 port:
 4. **Read the device's own extracted device tree first.** The answers (panel
    timings, touch protocol, Wi‑Fi supplies, firmware paths) were in Samsung's own
    downstream DT, not upstream docs.
+5. **Check who owns a reserved‑memory region before asking TrustZone to grant a
+   device permissions on it.** Addresses inherited from an SoC `.dtsi` can land
+   inside a vendor carveout that belongs to the firmware loader rather than to HLOS,
+   and HLOS cannot give away memory it does not own. The `qcom_scm_assign_mem()`
+   call then returns `-22`, and the tempting workaround — skipping the assignment —
+   leaves the peripheral running against memory it has no rights to. The eventual
+   failure looks nothing like a memory problem: here it was an instant, silent,
+   log‑less SoC fabric lockup on the first firmware write, which pointed suspicion at
+   the wrong step for days. Both Wi‑Fi and `rmtfs` on this device hit the identical
+   bug; the fix in each case was a single line of device tree.
 
 ## The boot problem, in one paragraph
 
@@ -118,7 +131,7 @@ docs/
   GPU.md            Adreno 640 render-only + Mesa kmsro bring-up.
   TOUCH.md          fts1ba90a + GPI-DMA bring-up.
   USB_NETWORKING.md The RNDIS+ACM lifeline (SSH + serial over USB).
-  WIFI.md           WCN3990 bring-up: how far it gets and the open blocker.
+  WIFI.md           WCN3990 bring-up: modem boot, ath10k QMI, and the wlan_mem fix.
 kernel/
   dts/              sm8150-samsung-gts6lwifi board device tree.
   config/           The kernel .config used for the running build.

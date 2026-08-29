@@ -292,6 +292,8 @@
 			regulator-min-microvolt = <1304000>;
 			regulator-max-microvolt = <1304000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+			regulator-boot-on;
 		};
 
 		vdda_hv_ebi0:
@@ -352,9 +354,11 @@
 		};
 
 		vreg_l11c_3p3: ldo11 {
-			regulator-min-microvolt = <3000000>;
+			regulator-min-microvolt = <3312000>;
 			regulator-max-microvolt = <3312000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+			regulator-boot-on;
 		};
 	};
 
@@ -557,7 +561,6 @@
 
 &wifi {
 	status = "okay";
-	qcom,msa-fixed-perm;
 
 	/* Samsung truth (downstream icnss node): l1a/l7a/l2c/l11c - same set
 	 * as the sm8150 HDK reference. The old vdda_wcss_* were Duo leftovers. */
@@ -585,7 +588,7 @@
 	/delete-property/ reg;
 	size = <0x0 0x400000>;
 	alignment = <0x0 0x200000>;
-	alloc-ranges = <0x0 0xb0000000 0x0 0x10000000>;
+	alloc-ranges = <0x0 0xb0000000 0x0 0x40000000>;
 	qcom,use-guard-pages;
 };
 &remoteproc_slpi { status = "disabled"; };
@@ -767,22 +770,12 @@
 	status = "okay";
 };
 
-/* Persistent-RAM crash log (ramoops) for wifi fw-crash diagnosis. 0xc0000000
- * is free System RAM, outside every firmware carveout and the rmtfs range. */
-/ {
-	reserved-memory {
-		#address-cells = <2>;
-		#size-cells = <2>;
-		ranges;
-
-		ramoops@c0000000 {
-			compatible = "ramoops";
-			reg = <0x0 0xc0000000 0x0 0x200000>;
-			console-size = <0x100000>;
-			record-size = <0x40000>;
-			msg-size = <0x40000>;
-			pmsg-size = <0x40000>;
-			ecc-size = <0>;
-		};
-	};
+/* Put the WLAN MSA in ordinary DDR that HLOS owns, at a fixed physical address.
+ * Samsung's pil_wlan_fw_region (0x8bc00000) belongs to the firmware loader, so
+ * qcom_scm_assign_mem() could never grant permissions on it (-22). Plain system
+ * RAM is HLOS-owned, so the assign succeeds -- while still being a real physical
+ * address the modem-side firmware can accept, which a self-allocated IOVA is not
+ * once the SMMU is attached. */
+&wlan_mem {
+	reg = <0x0 0xc0000000 0x0 0x100000>;
 };
