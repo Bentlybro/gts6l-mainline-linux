@@ -281,6 +281,45 @@ Idle draw is **~2.2–2.3 W**, giving roughly **12 hours** from a 27.1 Wh pack �
 7 h figure that earlier SSH-driven measurements suggested. Read every SSH-measured power
 figure as inflated by about half a watt.
 
+## Charge rate: the MUIC was never going to grant permission
+
+The charger powers up with USB safe defaults:
+
+```
+input limit (0x0D) = 500 mA
+fast charge (0x10) = 100 mA
+```
+
+On a stock device the **MUIC** identifies the cable — wall charger, PC port, whatever — and
+the driver raises the limits to match. Nothing drives the MUIC here, so nothing ever grants
+permission to draw more, and the tablet trickles no matter what it's plugged into. This is
+the same shape of problem as the z3s, where the charger defaulted low and the current had to
+be raised deliberately.
+
+Encoding and clamps straight from the vendor driver, so this is arithmetic rather than
+guesswork:
+
+```
+VBUSCNTL 0x0D   offset = ((mA - 100) / 25) & 0x7F    max 3275 mA   (input)
+CHGCNTL2 0x10   offset = ((mA - 100) / 50) & 0x3F    max 3250 mA   (into battery)
+```
+
+`tools/tabs6-charge.sh` (+ its service) maintains 2000 mA in and 2000 mA to the battery.
+Three things about it matter:
+
+- **Maintained, not set once.** The registers reset when the cable is inserted or the charger
+  changes mode.
+- **Only ever raises.** If something else sets a higher limit, it's left alone.
+- **Never touches the chip in `USB_OTG` mode.** There the SM5705 is a *supply*, not a charger,
+  and writing charge limits at it is meaningless. See [`USB_HOST.md`](USB_HOST.md).
+
+Asking for 2000 mA from a source that can't deliver it is safe: **AICL** walks the input
+current back until the supply voltage holds up, so a weak charger simply ends up giving what
+it can.
+
+> You cannot charge and use USB host mode at once — one port, and in host mode the chip is
+> sourcing power rather than accepting it.
+
 ### Still to do
 
 The **charger** side of the SM5705 (0x49) and the **MUIC** (0x25) are reachable but undriven.

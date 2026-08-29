@@ -157,9 +157,17 @@ Tune the VM for it, because the defaults assume swap is a slow disk:
 
 ```ini
 # /etc/sysctl.d/91-tabs6-zram.conf
-vm.swappiness = 150   # this is RAM, swap eagerly
+vm.swappiness = 100   # see below — 150 was too aggressive
 vm.page-cluster = 0   # random-access; readahead is pure waste
 ```
+
+> **Learn from this one.** `swappiness` was originally set to **150**, on the reasoning that
+> zram is RAM-speed so there's no reason to be shy about using it. That's right for throughput
+> and **wrong for interactivity**. It produced visible desktop stutter, and the counters showed
+> why: `pswpout 353043`, `pswpin 45576` — hundreds of thousands of pages evicted and tens of
+> thousands dragged back, with 1.3 GiB still available. Every page pulled back is a
+> decompression stall in the middle of whatever you were doing. 100 is what the zram
+> documentation actually suggests.
 
 Result: 4.8 GiB of RAM plus 6 GiB of RAM-speed swap, costing ~2 GiB of real memory when
 full.
@@ -191,16 +199,55 @@ pref("dom.w3c_touch_events.enabled", 1);
 Scope, honestly: this fixes Firefox. Qt *widget* applications (Konsole, Kate, Dolphin)
 have no equivalent switch. GTK 4 applications already have touch handles of their own.
 
-### Stop the keyboard resizing windows
+### The keyboard vs. the window: a trade-off with no free option
 
-Opening the on-screen keyboard **resizes** the focused window instead of covering it.
-That is KWin: it reports the input panel geometry to the window, and a maximised window
-shrinks to stay clear. There is a setting, and it defaults to off:
+Opening the on-screen keyboard **resizes** the focused window instead of covering it. That's
+KWin reporting the input panel geometry to the window, so a maximised window shrinks to stay
+clear. There's a setting to stop it:
 
 ```bash
 kwriteconfig6 --file kwinrc --group Windows --key OverlayVirtualKeyboardOnWindows true
 dbus-send --session --dest=org.kde.KWin --type=method_call /KWin org.kde.KWin.reconfigure
 ```
+
+**But understand what you're buying.** That setting stops the resize by no longer telling the
+window anything about the keyboard — which is *also* exactly what stops the window moving your
+text field clear of it. Turn it on and the keyboard will sit on top of the field you're typing
+into. It trades one annoyance for a worse one.
+
+We ended up back on `false` (windows resize, field stays visible) and softened the cost
+instead, by making the keyboard shorter:
+
+```qml
+/* qml/Keyboard.qml, on the canvas Item */
+readonly property real heightScale: 0.78
+height: fullScreenItem.height * (fullScreenItem.landscape ? Device.keyboardHeightLandscape
+                                                          : Device.keyboardHeightPortrait)
+        * heightScale
+```
+
+`Device.keyboardHeightLandscape` is a C++ getter with no gsettings knob, so scaling it in QML
+is the way. Stock takes close to half a 1600 px screen in landscape — and this port adds a
+sixth row (esc/ctrl/alt/arrows) upstream never had, so it starts taller than intended. A
+shorter keyboard covers less *and* makes the resize less severe, since height changes call
+`reportKeyboardVisibleRect()` and the compositor sizes windows to what it's told.
+
+### Desktop effects cost more here than elsewhere
+
+There's no real display controller — KWin renders on the GPU and the result is **copied** into
+the bootloader framebuffer that simpledrm scans out. No page flip. Full-screen effects mean
+full-screen damage, which means copying ~16 MB every frame, where damage-tracked partial
+updates would be nearly free. Blur is the worst offender because it dirties everything beneath
+it.
+
+```bash
+kwriteconfig6 --file kwinrc --group Plugins --key blurEnabled false
+kwriteconfig6 --file kwinrc --group Plugins --key contrastEnabled false
+kwriteconfig6 --file kdeglobals --group KDE --key AnimationDurationFactor 0.25
+```
+
+The copy is architectural, though: until the real DSI/DPU pipe works, there will always be one
+between what the GPU draws and what the panel shows.
 
 ---
 
