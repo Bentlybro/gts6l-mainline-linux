@@ -921,3 +921,15 @@
 / {
 	/delete-node/ adc-battery;
 };
+
+/* PTN36502 USB-C SuperSpeed redriver.
+ *
+ * USB-C can be plugged in either way round, so the SuperSpeed differential
+ * pairs have to be muxed to whichever orientation the cable actually took.
+ * Nothing here does that yet, which is why a USB 3 device negotiates only
+ * high-speed and lands on the USB2 root hub. Samsung put a PTN36502 on se10
+ * to do the muxing; enable the bus so it can at least be talked to. */
+&i2c10 {
+	status = "okay";
+	clock-frequency = <400000>;
+};

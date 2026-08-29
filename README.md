@@ -58,7 +58,8 @@ SoC brought up.
 | Native display / brightness / DPMS | 🚧 | dual‑DSI ANA38401 panel; needs the ≥6.16 bonded‑cmd‑mode DPU fixes (6.18 tree staged) |
 | Battery level reporting | ✅ | voltage and percentage from `VPH_PWR` on pm8150's ADC, with a low‑battery warning — see [`docs/BATTERY.md`](docs/BATTERY.md) |
 | Power button, shutdown, reboot | ✅ | power key is the PMIC PON block, not a GPIO; power‑off and reboot go through PMIC `PS_HOLD` because **PSCI `SYSTEM_OFF`/`SYSTEM_RESET` both hang on this firmware** — see [`docs/POWER.md`](docs/POWER.md) |
-| Charge detection / fuel gauge | 🚧 | the battery is not on the Qualcomm PMIC at all — Samsung fits an **SM5705** charger + fuel gauge + MUIC on I²C, and it answers; no mainline driver yet |
+| Fuel gauge + charge detection | ✅ | the battery is not on the Qualcomm PMIC at all — Samsung fits an **SM5705** charger + fuel gauge + MUIC on I²C. Driver written from scratch: real state of charge, voltage, OCV and current, so charging is detected properly |
+| USB host — keyboard, SSD, hub | ✅ | dual‑role port with a runtime `usb-role` switch, VBUS sourced from the SM5705 boost. A 4 TB bus‑powered SSD runs off it — at USB 2.0; SuperSpeed is still unsolved, see [`docs/USB_HOST.md`](docs/USB_HOST.md) |
 | S Pen, Bluetooth, audio | ⬜ | not started |
 
 Read [`docs/PORT.md`](docs/PORT.md) for the full hardware map and
@@ -137,6 +138,8 @@ docs/
   WIFI.md           WCN3990 bring-up: modem boot, ath10k QMI, and the wlan_mem fix.
   DESKTOP.md        Making it usable: on-screen keyboard with real modifier keys,
                     zram, touch text selection, Electron/Wayland, routing.
+  USB_HOST.md       Host mode, VBUS from the SM5705, and why SuperSpeed
+                    does not work yet.
   BATTERY.md        Reading the battery through the one PMIC the SPMI arbiter
                     lets us touch.
   POWER.md          Power button, shutdown and reboot: why PSCI cannot be used

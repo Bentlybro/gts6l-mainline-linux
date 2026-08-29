@@ -60,7 +60,10 @@ DSC (from the device's downstream panel node).
 | Battery level reporting | ✅ | voltage + percentage via `VPH_PWR` on pm8150's ADC — [`BATTERY.md`](BATTERY.md) |
 | Power button (lock / wake / menu) | ✅ | PMIC PON KPDPWR, not a GPIO — [`POWER.md`](POWER.md) |
 | Shutdown + reboot | ✅ | via PMIC PS_HOLD from a reboot notifier; **PSCI `SYSTEM_OFF`/`SYSTEM_RESET` both hang here** and must be overtaken. SMPL disarmed or it powers straight back up — [`POWER.md`](POWER.md) |
-| Charge detection / fuel gauge | 🚧 | pm8150b is unreachable (SPMI arbiter denies all of SID 2), but the battery is **not on the Qualcomm PMIC** — Samsung fits an **SM5705** charger+gauge+MUIC: gauge `0x71` on `i2c11`, charger `0x49` + MUIC `0x25` on `i2c4` (both answer already). No mainline driver yet |
+| Fuel gauge + charge detection | ✅ | **SM5705** on I²C, not the Qualcomm PMIC — real SOC, OCV, voltage and current, so charging is detected properly. Driver written from scratch, `kernel/drivers/sm5705_fuelgauge.c` — [`BATTERY.md`](BATTERY.md) |
+| USB host (keyboard, SSD, hub) | ✅ | `dr_mode = otg` + role switch + VBUS from the SM5705 boost; `usb-role host`. Runs at USB 2.0 only — SuperSpeed unsolved, see [`USB_HOST.md`](USB_HOST.md) |
+| USB SuperSpeed | 🚧 | host, PHY and redriver all check out; orientation exhausted. Prime suspects: the cable, then `phy-qcom-qmp-combo.c` pinning orientation to NORMAL with no Type-C port manager to correct it |
+| Charge control / charging current | ⬜ | SM5705 charger reachable at `0x49`, only the OTG boost is driven so far |
 | S Pen (Wacom W9021) | ⬜ | wacom@0x56 on i2c14, irq gpio 5, pdct 53, fwe 11 |
 | Bluetooth (WCN3990 UART) | ⬜ | |
 | Audio | ⬜ | |
