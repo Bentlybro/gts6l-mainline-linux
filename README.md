@@ -56,6 +56,7 @@ SoC brought up.
 | USB networking + SSH | ✅ | RNDIS+ACM configfs gadget → root SSH over USB (the dev lifeline) |
 | Wi‑Fi (WCN3990) | ✅ | 802.11ac, 866.7 MBit/s link rate (VHT‑MCS 9, 80 MHz, 2 streams), auto‑connects at boot; fixed by relocating `wlan_mem` into HLOS‑owned DDR — see [`docs/WIFI.md`](docs/WIFI.md) |
 | Native display / brightness / DPMS | 🚧 | dual‑DSI ANA38401 panel; needs the ≥6.16 bonded‑cmd‑mode DPU fixes (6.18 tree staged) |
+| Battery / charge reporting | 🚧 | needs the SPMI PMIC children + ADC; state-of-charge must be voltage-derived (no mainline QG driver) |
 | S Pen, Bluetooth, audio | ⬜ | not started |
 
 Read [`docs/PORT.md`](docs/PORT.md) for the full hardware map and

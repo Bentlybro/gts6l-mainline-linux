@@ -57,6 +57,7 @@ DSC (from the device's downstream panel node).
 | Fedora 44 + KDE Plasma on UFS | ✅ | Wayland session, autologin |
 | Wi-Fi (WCN3990) | ✅ | 802.11ac, 866.7 MBit/s link (VHT-MCS 9, 80 MHz, 2 streams); auto-connects at boot — [`WIFI.md`](WIFI.md) |
 | Native display / brightness / DPMS | 🚧 | needs ≥6.16 bonded-cmd-mode DPU; 6.18 tree staged |
+| Battery / charge reporting | 🚧 | nothing in `/sys/class/power_supply`; needs `MFD_SPMI_PMIC` + `QCOM_SPMI_ADC5` and a `VBAT_SNS` channel. Qualcomm's fuel gauge (QG) has no mainline driver, so state-of-charge has to be voltage-derived |
 | S Pen (Wacom W9021) | ⬜ | wacom@0x56 on i2c14, irq gpio 5, pdct 53, fwe 11 |
 | Bluetooth (WCN3990 UART) | ⬜ | |
 | Audio | ⬜ | |
@@ -93,6 +94,12 @@ they need anything the other subsystems did not.
 - A **serial console with no cable attached blocks every later printk forever** —
   disable it entirely (`console=tty0` only).
 - **simpledrm is fixed-mode** — reconfiguring resolution/scale hard-crashes the SoC.
+- The stock kernel config here shipped **without `CONFIG_ZRAM`**, so Fedora's
+  zram-generator silently produced no swap at all. On a 4.8 GiB device that hurts;
+  enabling ZRAM/ZSWAP and configuring zstd-compressed swap is worth doing early.
+- **SPMI PMIC children are not instantiated** unless `MFD_SPMI_PMIC` is enabled. The
+  PMICs enumerate on the bus regardless, which makes it look like SPMI is fine while
+  every PMIC function (ADC, battery, RTC) is silently absent.
 - This **bootloader clears/retrains DDR on reboot** — persistent-RAM crash capture
   (ramoops) does not survive, which complicates debugging hard SoC locks.
 - **A `reserved-memory` region inherited from `sm8150.dtsi` may sit in memory the
