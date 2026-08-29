@@ -202,6 +202,27 @@ systemd cannot cover for it: `logind`'s `IdleAction` depends on the session idle
 hint, and KWin never sets it — `IdleHint` stayed `no` after half an hour with no
 input at all.
 
+**Still true on Plasma 6.7.4.** A full distro upgrade did not fix it — 6.7.4
+registers the same stock `300000ms` against a config asking for 35s — so this is
+not a 6.6.4 regression that will age out, and `tabs6-idled` stays.
+
+### The unit file trap that made this worse
+
+`tabs6-idled.service` originally carried `After=graphical.target` with
+`WantedBy=multi-user.target`. That is an ordering **cycle**, because
+graphical.target is itself ordered after multi-user.target, and systemd resolves
+it by silently deleting the start job:
+
+    graphical.target: Found ordering cycle: multi-user.target/start after
+      tabs6-idled.service/start after graphical.target/start - after multi-user.target
+    graphical.target: Job tabs6-idled.service/start deleted to break ordering cycle
+
+So the service never started at boot — while `systemctl enable --now` worked
+perfectly, because that starts the unit directly and never exercises boot
+ordering. Testing with `enable --now` proves nothing about whether a unit comes
+up on its own. Drop the `After=` line and check `systemd-analyze verify` is
+silent.
+
 ---
 
 ## tabs6-idled
