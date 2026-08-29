@@ -1,0 +1,35 @@
+--- drivers/mfd/qcom-spmi-pmic.c.orig	2026-08-29 16:01:01.718917163 +0100
++++ drivers/mfd/qcom-spmi-pmic.c	2026-08-29 16:01:50.783549120 +0100
+@@ -269,8 +269,30 @@
+ 	/* Only the first slave id for a PMIC contains this information */
+ 	if (sdev->usid % ctx->num_usids == 0) {
+ 		ret = pmic_spmi_load_revid(regmap, &sdev->dev, &ctx->pmic);
+-		if (ret < 0)
+-			return ret;
++		if (ret < 0) {
++			/*
++			 * On this board the SPMI arbiter denies the
++			 * applications EE the revision read on pm8150b, SID 2:
++			 * "0x2 0x104: transaction failed". Upstream treats that
++			 * as fatal, which aborts the probe and leaves every
++			 * child of that PMIC uninstantiated - including the ADC
++			 * block that carries the battery sense channel, so
++			 * nothing can report a battery at all.
++			 *
++			 * The revision is only used to describe the part, not
++			 * to reach it, so carry on without it and let each
++			 * child decide for itself. A child that genuinely
++			 * cannot reach its peripheral fails its own probe,
++			 * which is both harmless and far more informative than
++			 * silently having no children.
++			 */
++			dev_warn(&sdev->dev,
++				 "revid read failed (%d), continuing without it\n",
++				 ret);
++			ctx->pmic.type = PMIC_TYPE_VALUE;
++			ctx->pmic.subtype = 0;
++			ctx->pmic.name = "unknown";
++		}
+ 	} else {
+ 		ret = pmic_spmi_get_base_revid(sdev, ctx);
+ 		if (ret)

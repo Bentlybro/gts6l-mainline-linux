@@ -57,7 +57,8 @@ DSC (from the device's downstream panel node).
 | Fedora 44 + KDE Plasma on UFS | ✅ | Wayland session, autologin |
 | Wi-Fi (WCN3990) | ✅ | 802.11ac, 866.7 MBit/s link (VHT-MCS 9, 80 MHz, 2 streams); auto-connects at boot — [`WIFI.md`](WIFI.md) |
 | Native display / brightness / DPMS | 🚧 | needs ≥6.16 bonded-cmd-mode DPU; 6.18 tree staged |
-| Battery / charge reporting | 🚧 | nothing in `/sys/class/power_supply`; needs `MFD_SPMI_PMIC` + `QCOM_SPMI_ADC5` and a `VBAT_SNS` channel. Qualcomm's fuel gauge (QG) has no mainline driver, so state-of-charge has to be voltage-derived |
+| Battery level reporting | ✅ | voltage + percentage via `VPH_PWR` on pm8150's ADC — [`BATTERY.md`](BATTERY.md) |
+| Charge detection / fuel gauge | ❌ | **not possible.** The SPMI arbiter denies the applications EE all of SID 2, so pm8150b — the charger and fuel-gauge PMIC — is unreachable. `VBAT_SNS` included |
 | S Pen (Wacom W9021) | ⬜ | wacom@0x56 on i2c14, irq gpio 5, pdct 53, fwe 11 |
 | Bluetooth (WCN3990 UART) | ⬜ | |
 | Audio | ⬜ | |

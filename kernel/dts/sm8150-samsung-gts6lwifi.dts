@@ -779,3 +779,70 @@
 &wlan_mem {
 	reg = <0x0 0xc0000000 0x0 0x100000>;
 };
+
+/* Battery sensing. The pm8150b ADC block upstream declares only reference and
+ * temperature channels, so there is no way to read the battery at all. pm8150b
+ * is the PMIC carrying the charger and fuel gauge on this board.
+ *
+ * VBAT_SNS and VPH_PWR both arrive through a divide-by-three network, hence the
+ * 1:3 pre-scaling; without it the driver reports a third of the real voltage.
+ * VPH_PWR is the system rail and tracks the battery closely, so it is a useful
+ * cross-check that VBAT_SNS is reading something real rather than noise. */
+&pm8150b_adc {
+	channel@83 {
+		reg = <ADC5_VPH_PWR>;
+		qcom,pre-scaling = <1 3>;
+		label = "vph_pwr";
+	};
+
+	channel@84 {
+		reg = <ADC5_VBAT_SNS>;
+		qcom,pre-scaling = <1 3>;
+		label = "vbat_sns";
+	};
+};
+
+/* The battery rail, read from the PMIC that actually probes.
+ *
+ * VBAT_SNS lives on pm8150b (the charger PMIC), but the SPMI arbiter on this
+ * board denies the applications EE the revision read on SID 2, so the MFD
+ * driver never instantiates any pm8150b child at all. pm8150 (SID 0) probes
+ * fine, and VPH_PWR is that PMIC's own supply rail -- which on a tablet is the
+ * battery rail. It sags a little under load compared with a true VBAT_SNS
+ * reading, but it tracks the battery and it is reachable. */
+&pm8150_adc {
+	channel@83 {
+		reg = <ADC5_VPH_PWR>;
+		qcom,pre-scaling = <1 3>;
+		label = "vph_pwr";
+	};
+};
+
+/ {
+	/* Battery description. The percentage is derived from voltage against
+	 * this open-circuit-voltage curve, because Qualcomm's own fuel gauge
+	 * (QG) has no mainline driver and the gauge itself sits on pm8150b,
+	 * which the SPMI arbiter will not let us talk to. A generic 4.4 V
+	 * Li-ion curve; the pack is 7040 mAh. */
+	gts6l_battery: battery {
+		compatible = "simple-battery";
+		voltage-min-design-microvolt = <3400000>;
+		voltage-max-design-microvolt = <4400000>;
+		charge-full-design-microamp-hours = <7040000>;
+		ocv-capacity-celsius = <25>;
+		ocv-capacity-table-0 = <4400000 100>, <4330000 95>, <4270000 90>,
+			<4210000 85>, <4150000 80>, <4090000 75>, <4030000 70>,
+			<3980000 65>, <3930000 60>, <3880000 55>, <3840000 50>,
+			<3810000 45>, <3780000 40>, <3750000 35>, <3720000 30>,
+			<3690000 25>, <3660000 20>, <3630000 15>, <3590000 10>,
+			<3530000 5>, <3400000 0>;
+	};
+
+	/* Reads the battery rail through pm8150's ADC. */
+	adc-battery {
+		compatible = "adc-battery";
+		io-channels = <&pm8150_adc ADC5_VPH_PWR>;
+		io-channel-names = "voltage";
+		monitored-battery = <&gts6l_battery>;
+	};
+};

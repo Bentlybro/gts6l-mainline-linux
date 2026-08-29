@@ -1,0 +1,126 @@
+--- /tmp/gab-orig.c	2026-08-29 16:13:22.351112800 +0100
++++ drivers/power/supply/generic-adc-battery.c	2026-08-29 16:14:57.142831045 +0100
+@@ -48,6 +48,8 @@
+ 	struct delayed_work bat_work;
+ 	int status;
+ 	struct gpio_desc *charge_finished;
++	struct power_supply_battery_info *info;
++	int volt_avg;
+ };
+ 
+ static struct gab *to_generic_bat(struct power_supply *psy)
+@@ -92,9 +94,14 @@
+ 	ret = iio_read_channel_processed(adc_bat->channel[channel], result);
+ 	if (ret < 0)
+ 		dev_err(&adc_bat->psy->dev, "read channel error: %d\n", ret);
+-	else
+-		*result *= 1000;
+ 
++	/*
++	 * Upstream multiplies by 1000 here, because IIO's convention for a
++	 * processed voltage is millivolts while power_supply wants microvolts.
++	 * qcom-spmi-adc5, the ADC this board reads the battery through, already
++	 * reports microvolts - its 1.25 V reference channel reads 1250216 - so
++	 * scaling again would report thousands of volts. Left unscaled.
++	 */
+ 	return ret;
+ }
+ 
+@@ -115,6 +122,34 @@
+ 		return gab_read_channel(adc_bat, GAB_POWER, &val->intval);
+ 	case POWER_SUPPLY_PROP_TEMP:
+ 		return gab_read_channel(adc_bat, GAB_TEMP, &val->intval);
++	case POWER_SUPPLY_PROP_CAPACITY: {
++		int uv, cap, ret;
++
++		ret = gab_read_channel(adc_bat, GAB_VOLTAGE, &uv);
++		if (ret < 0)
++			return ret;
++
++		/*
++		 * The rail this reads sags by hundreds of millivolts under load
++		 * and recovers when the machine goes idle, so an instantaneous
++		 * sample would make the reported percentage lurch every time
++		 * the CPU got busy. Smooth it before the lookup: the battery
++		 * itself cannot change quickly, so a slow average is closer to
++		 * the truth than the raw reading is.
++		 */
++		if (!adc_bat->volt_avg)
++			adc_bat->volt_avg = uv;
++		else
++			adc_bat->volt_avg += (uv - adc_bat->volt_avg) / 8;
++
++		cap = power_supply_batinfo_ocv2cap(adc_bat->info,
++						   adc_bat->volt_avg, 25);
++		if (cap < 0)
++			return cap;
++
++		val->intval = cap;
++		return 0;
++	}
+ 	default:
+ 		return -EINVAL;
+ 	}
+@@ -130,7 +165,21 @@
+ 	adc_bat = container_of(delayed_work, struct gab, bat_work);
+ 	status = adc_bat->status;
+ 
+-	if (!power_supply_am_i_supplied(adc_bat->psy))
++	/*
++	 * power_supply_am_i_supplied() returns -ENODEV when nothing on the
++	 * system claims to supply this battery. Upstream's !ret test reads that
++	 * negative value as "supplied" and so reports Charging forever, which
++	 * is precisely the case on this board: there is no charger driver at
++	 * all, because the charger sits on a PMIC the SPMI arbiter will not let
++	 * the applications processor reach.
++	 *
++	 * Reporting Charging permanently is worse than merely untidy - the
++	 * desktop only warns about a low battery while the status is
++	 * discharging, so it would never warn at all. Treat "no supplier known"
++	 * as discharging: true whenever the tablet is on battery, which is the
++	 * case that actually needs a warning.
++	 */
++	if (power_supply_am_i_supplied(adc_bat->psy) <= 0)
+ 		adc_bat->status =  POWER_SUPPLY_STATUS_DISCHARGING;
+ 	else if (gab_charge_finished(adc_bat))
+ 		adc_bat->status = POWER_SUPPLY_STATUS_NOT_CHARGING;
+@@ -183,7 +232,7 @@
+ 	 */
+ 	properties = devm_kcalloc(&pdev->dev,
+ 				  ARRAY_SIZE(gab_props) +
+-				  ARRAY_SIZE(gab_chan_name),
++				  ARRAY_SIZE(gab_chan_name) + 1,
+ 				  sizeof(*properties),
+ 				  GFP_KERNEL);
+ 	if (!properties)
+@@ -221,6 +270,17 @@
+ 		return dev_err_probe(&pdev->dev, -ENODEV, "Failed to get any ADC channel\n");
+ 
+ 	/*
++	 * A monitored-battery description carries an open-circuit-voltage to
++	 * capacity table, which is the only way this driver can turn a voltage
++	 * into a percentage. Without one there is no honest way to report
++	 * capacity, so the property is simply not offered.
++	 */
++	bool has_batinfo = of_property_present(pdev->dev.of_node, "monitored-battery");
++
++	if (has_batinfo && adc_bat->channel[GAB_VOLTAGE])
++		properties[index++] = POWER_SUPPLY_PROP_CAPACITY;
++
++	/*
+ 	 * Total number of properties is equal to static properties
+ 	 * plus the dynamic properties.Some properties may not be set
+ 	 * as come channels may be not be supported by the device.So
+@@ -233,6 +293,12 @@
+ 	if (IS_ERR(adc_bat->psy))
+ 		return dev_err_probe(&pdev->dev, PTR_ERR(adc_bat->psy), "Failed to register power-supply device\n");
+ 
++	if (has_batinfo) {
++		ret = power_supply_get_battery_info(adc_bat->psy, &adc_bat->info);
++		if (ret)
++			return dev_err_probe(&pdev->dev, ret, "Failed to get battery info\n");
++	}
++
+ 	ret = devm_delayed_work_autocancel(&pdev->dev, &adc_bat->bat_work, gab_work);
+ 	if (ret)
+ 		return dev_err_probe(&pdev->dev, ret, "Failed to register delayed work\n");
