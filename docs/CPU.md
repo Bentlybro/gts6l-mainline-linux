@@ -88,6 +88,77 @@ eight cores were equal, which on this SoC costs a lot of power for no throughput
 Nothing was done to enable any of this. It works because the DT describes the
 capacities and OPPs correctly and mainline does the rest.
 
+## The prime core, in detail
+
+The prime core is **not a different core design**. `cpu7` and `cpu4-6` report the
+same ARM part ID (`0x804`, A76-derived); the prime is one of those Golds given its
+own cpufreq policy, so it has an independent clock and voltage domain and can be
+driven harder than its three siblings. ARM's DynamIQ (the DSU) is what allows
+per-core domains inside one cluster — before it, this would have needed a
+physically separate cluster.
+
+Beyond clock, the SoC documentation gives the prime **512 KB of L2** against
+256 KB for each Gold and 128 KB for each Silver, over a shared 2 MB L3 in the DSU.
+That is *not* verifiable on this device: the DT does not describe cache sizes, so
+`/sys/devices/system/cpu/cpu7/cache/index2/size` is absent entirely (only `level`,
+`type` and `shared_cpu_list` are populated). Treat the cache figures as SoC spec,
+not as something this port has measured.
+
+### What the prime actually costs
+
+The energy model has real numbers for this (units are arbitrary but mutually
+comparable):
+
+| Cluster | at minimum | at maximum |
+|---|---|---|
+| Silver `cpu0` | 300 MHz → 25,391 | 1786 MHz → 292,203 |
+| Gold `cpu4` | 710 MHz → 96,848 | 2419 MHz → 921,403 |
+| Prime `cpu7` | 826 MHz → 130,088 | 2842 MHz → **1,177,000** |
+
+The prime at full tilt draws **4.0× a Silver at full tilt** for 1.6× the clock, and
+**1.28× a Gold** for 1.17× the clock. Its top step is the worst bargain on the
+chip: the last 96 MHz (2746 → 2842 MHz, +3.5% clock) costs +8.7% power.
+
+    2534400 kHz   902,951
+    2649600 kHz   993,820     +10.1%
+    2745600 kHz  1,082,867     +9.0%
+    2841600 kHz  1,177,000     +8.7%
+
+### Two things in that table that are not obvious
+
+**The prime is cheaper than a Gold at comparable speed.** Prime at 2534 MHz costs
+902,951; Gold at its 2419 MHz maximum costs 921,403. The prime is 4.7% *faster*
+for 2% *less* power. That is speed binning — the prime is the physically best core
+on the die, which is why it is the one given the extra headroom. It also means
+"the prime is the thirsty core" is only true at the top of its range; through most
+of it, it is the better core in every sense.
+
+**The most efficient place to run work is not a Silver.** Ranking the per-OPP cost
+(energy per unit of work, lower is better):
+
+    Gold   @  710 MHz   3,797   <- cheapest on the SoC
+    Prime  @  826 MHz   4,380
+    Silver @  300 MHz   4,978
+    Silver @ 1786 MHz   9,549
+    Gold   @ 2419 MHz  10,578
+    Prime  @ 2842 MHz  11,494
+
+An A76 idling near its floor does enough more work per cycle to beat an A55 on
+energy per unit of work. The caveat is that this is the *per-core* model and does
+not price keeping the Gold cluster and its rail awake, which is exactly why EAS
+still packs light background work onto Silvers that are already powered — the
+Silvers win on total system energy, not on this column.
+
+### What it means here
+
+The prime is for the **one thread that is blocking you**: the browser's main JS
+thread, an application launching, the serial fraction of a build. It is not for
+sustained parallel load — under `make -j8` no single core holds 2.84 GHz for long,
+and the throughput comes from the other seven.
+
+For dev work on this tablet that is the right shape. Editor and browser
+responsiveness lean on the prime; build throughput does not really depend on it.
+
 ## Thermals
 
 Idle at the desktop, with the charger connected:
