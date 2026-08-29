@@ -1,8 +1,8 @@
 #!/bin/sh
-# Flip the USB-C port between gadget and host.
+# Flip the USB-C port between gadget and host, and drive VBUS for host mode.
 #
 #   usb-role            show the current role
-#   usb-role host       become a USB host (plug in a keyboard, hub, stick)
+#   usb-role host       become a USB host and power the port (keyboard, SSD, hub)
 #   usb-role device     go back to the RNDIS/ACM gadget (SSH over USB)
 #
 # The port is dual-role in the device tree but nothing on this board tells the
@@ -11,11 +11,57 @@
 # every boot, deliberately, so the gadget lifeline is always there after a
 # reboot even if Wi-Fi is broken.
 #
-# Note on power: nothing here drives a VBUS boost. That regulator lives in the
-# SM5705, which has no driver yet. A self-powered hub works; a bus-powered
-# keyboard plugged straight into the port may get no power and never enumerate.
+# VBUS comes from the SM5705 charger, which has no driver yet, so the boost is
+# poked directly over I2C here. Register map from Silicon Mitus/Samsung sources
+# and cross-checked against the live part: CNTL read back 0x05 = CHG_ON and
+# FLEDCNTL6 read 0x05 = 4500 mV, both exactly what the vendor operation-mode
+# table says they should be at rest.
+#
+#   0x0c CNTL       bits 2:0   operation mode: 5 = CHG_ON, 7 = USB_OTG
+#   0x14 CHGCNTL6   bits 3:2   OTG current limit: 2 = 900 mA
+#   0x20 FLEDCNTL6  bits 3:0   boost output: 5 = 4500 mV, 0xb = 5100 mV
+#
+# Doing this from a shell script is a stopgap. The right home for it is a
+# charger driver exposing a VBUS regulator that the role switch drives.
 
 set -eu
+
+CHG_BUS=1
+CHG_ADDR=0x49
+REG_CNTL=0x0c
+REG_CHGCNTL6=0x14
+REG_FLEDCNTL6=0x20
+
+OP_MODE_CHG_ON=5
+OP_MODE_USB_OTG=7
+BST_OUT_5100MV=0x0b
+BST_OUT_4500MV=0x05
+OTG_CURRENT_900MA=2
+
+FUELGAUGE=/sys/class/power_supply/sm5705-fuelgauge
+
+rmw() { # register, mask, value
+	old=$(i2cget -y $CHG_BUS $CHG_ADDR "$1" b)
+	new=$(( (old & ~$2) | $3 ))
+	i2cset -y $CHG_BUS $CHG_ADDR "$1" $new b
+}
+
+vbus_on() {
+	# Refuse to source VBUS while something is charging us. Sourcing and
+	# sinking at the same time is not a state to go looking for.
+	if [ -r "$FUELGAUGE/status" ] && [ "$(cat $FUELGAUGE/status)" = "Charging" ]; then
+		echo "usb-role: a charger is attached, not enabling VBUS" >&2
+		return 1
+	fi
+	rmw $REG_FLEDCNTL6 0x0f $BST_OUT_5100MV
+	rmw $REG_CHGCNTL6  0x0c $(( OTG_CURRENT_900MA << 2 ))
+	rmw $REG_CNTL      0x07 $OP_MODE_USB_OTG
+}
+
+vbus_off() {
+	rmw $REG_CNTL      0x07 $OP_MODE_CHG_ON
+	rmw $REG_FLEDCNTL6 0x0f $BST_OUT_4500MV
+}
 
 ROLE_FILE=$(ls /sys/class/usb_role/*/role 2>/dev/null | head -1)
 
@@ -28,21 +74,27 @@ fi
 
 case "${1:-}" in
 "")
-	echo "$(cat "$ROLE_FILE")"
+	printf '%s' "$(cat "$ROLE_FILE")"
+	mode=$(( $(i2cget -y $CHG_BUS $CHG_ADDR $REG_CNTL b) & 7 ))
+	[ "$mode" = "$OP_MODE_USB_OTG" ] && printf ' (VBUS on)'
+	echo
 	;;
-host | device | none)
+host)
+	vbus_on || exit 1
+	echo host > "$ROLE_FILE"
+	sleep 3
+	echo "usb role: $(cat "$ROLE_FILE") (VBUS on)"
+	# Real devices look like "1-1"; "1-0:1.0" and "usb1" are the root hubs
+	# themselves and are always present, so do not count them.
+	n=$(ls /sys/bus/usb/devices/ 2>/dev/null | grep -cE '^[0-9]+-[0-9]+$' || true)
+	echo "devices attached: $n"
+	;;
+device | none)
 	echo "$1" > "$ROLE_FILE"
-	sleep 1
-	echo "usb role: $(cat "$ROLE_FILE")"
-	if [ "$1" = host ]; then
-		# Give the hub a moment, then say what turned up.
-		sleep 2
-		# Real devices look like "1-1"; "1-0:1.0" and "usb1" are the root
-		# hubs themselves and are always there, so do not count them.
-		n=$(ls /sys/bus/usb/devices/ 2>/dev/null | grep -cE '^[0-9]+-[0-9]+$' || true)
-		echo "devices attached: $n"
-		[ "$n" -eq 0 ] && echo "(nothing yet - bus-powered devices may need a powered hub)"
-	fi
+	vbus_off
+	# The switch takes a moment; reading straight back reports the old role.
+	sleep 2
+	echo "usb role: $(cat "$ROLE_FILE") (VBUS off)"
 	;;
 *)
 	echo "usage: usb-role [host|device|none]" >&2

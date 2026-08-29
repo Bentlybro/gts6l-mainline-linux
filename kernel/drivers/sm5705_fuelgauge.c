@@ -26,6 +26,8 @@
  * alone rather than guessed at.
  */
 
+#include <linux/bitfield.h>
+#include <linux/bits.h>
 #include <linux/devm-helpers.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
@@ -88,6 +90,32 @@ static int sm5705_fg_to_micro(int raw)
 	return ((long long)raw * 1000000) >> SM5705_FG_FRACTIONAL_BITS;
 }
 
+/*
+ * Current is SIGN-MAGNITUDE, not two's complement.
+ *
+ * Bit 15 is a sign flag on its own, bits 12:11 are whole amps and bits 10:0
+ * the fraction in 1/2048ths. Reading the register as a signed 16-bit value
+ * gets charging right purely by accident - bit 15 is clear then, and the
+ * layout happens to coincide with a plain divide by 2048 - while discharging
+ * comes out catastrophically wrong: -14.85 A for what is really about -1.15 A.
+ * Worth knowing, because the wrong answer looks plausible enough in the
+ * charging direction to pass a first test.
+ */
+#define SM5705_FG_CURRENT_SIGN		BIT(15)
+#define SM5705_FG_CURRENT_AMPS		GENMASK(12, 11)
+#define SM5705_FG_CURRENT_FRAC		GENMASK(10, 0)
+
+static int sm5705_fg_decode_current_ua(int raw)
+{
+	int ua;
+
+	ua = FIELD_GET(SM5705_FG_CURRENT_AMPS, raw) * 1000000;
+	ua += ((raw & SM5705_FG_CURRENT_FRAC) * 1000000) >>
+	      SM5705_FG_FRACTIONAL_BITS;
+
+	return (raw & SM5705_FG_CURRENT_SIGN) ? -ua : ua;
+}
+
 static int sm5705_fg_get_current_ua(struct sm5705_fg *fg, int *out)
 {
 	int raw = sm5705_fg_read(fg, SM5705_FG_CURRENT);
@@ -95,8 +123,7 @@ static int sm5705_fg_get_current_ua(struct sm5705_fg *fg, int *out)
 	if (raw < 0)
 		return raw;
 
-	/* Signed: negative while the battery is being drained. */
-	*out = sm5705_fg_to_micro((s16)raw);
+	*out = sm5705_fg_decode_current_ua(raw);
 
 	return 0;
 }
