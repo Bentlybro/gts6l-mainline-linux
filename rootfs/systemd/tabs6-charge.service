@@ -1,0 +1,16 @@
+[Unit]
+Description=Tab S6 charge current control (SM5705)
+Documentation=file:///usr/local/bin/tabs6-charge.sh
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/tabs6-charge.sh
+Restart=always
+RestartSec=5
+# Raise these if you have a beefier charger; AICL will cap it to what the
+# supply can actually deliver, so overshooting is safe.
+Environment=TABS6_INPUT_MA=2000
+Environment=TABS6_CHARGE_MA=2000
+
+[Install]
+WantedBy=multi-user.target

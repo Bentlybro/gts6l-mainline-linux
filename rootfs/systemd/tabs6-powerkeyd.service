@@ -1,0 +1,16 @@
+[Unit]
+Description=Tab S6 power key handler (lock / wake / power menu)
+Documentation=file:///usr/local/bin/tabs6-powerkeyd.py
+After=systemd-logind.service
+Wants=systemd-logind.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/tabs6-powerkeyd.py
+Restart=always
+RestartSec=2
+# The desktop session may not exist yet at boot; the daemon only talks to it
+# when a key is actually pressed, so simply keep it alive.
+
+[Install]
+WantedBy=multi-user.target

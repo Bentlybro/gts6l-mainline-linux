@@ -1,0 +1,12 @@
+[Unit]
+Description=Re-apply Tab S6 desktop patches that RPM upgrades overwrite
+Before=display-manager.service graphical.target
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/tabs6-desktop-patches.py
+
+[Install]
+WantedBy=multi-user.target

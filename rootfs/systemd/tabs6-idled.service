@@ -1,0 +1,11 @@
+[Unit]
+Description=Tab S6 idle suspend (PowerDevil will not do it)
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/tabs6-idled.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
