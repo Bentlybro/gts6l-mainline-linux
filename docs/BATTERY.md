@@ -227,6 +227,60 @@ With only a voltage, runtime was unanswerable without measuring a discharge slop
 hour. With current it is a sum — watts = volts × amps, hours = remaining Wh ÷ watts — and it
 takes seconds.
 
+## Measuring power without fooling yourself
+
+Once current decodes correctly, power is `V × I` and runtime is arithmetic. Getting a
+*trustworthy* number is harder than it looks, and this went wrong twice.
+
+**Do not drive the measurement over SSH.** Every poll wakes the CPU, and that noise is larger
+than most effects worth measuring. A ten-sample burst at one fixed brightness ranged from
+−2.60 to −3.35 W — **±0.37 W of jitter on a single reading**.
+
+The giveaway that the method was broken, rather than the hardware being strange:
+
+```
+screen ON, 100% brightness   -2.28 W
+screen OFF (DPMS)            -2.50 W     <- impossible
+```
+
+A blanked panel cannot draw more than a lit one. When a control comes out backwards, stop and
+fix the method.
+
+**The expensive mistake:** a matched pair of hand-driven readings (100% at −2.95 W, minimum at
+−2.17 W) looked like a clean 0.78 W saving and was reported as one. The clean on-device run
+then measured the *same* 100% condition at **−2.286 W**. That 0.66 W gap between two
+measurements of one identical condition is the SSH overhead — larger than the claimed effect.
+Two readings taken "the same way" prove nothing if the thing perturbing them varies.
+
+Use `tools/brightness-power-test.sh`: runs entirely on the device, 45 s settle, 120 s averaged
+per level, and **repeats a level at the end** so the run can be checked against itself.
+
+### What it actually measured
+
+```
+brightness 100%   -2.286 W
+brightness 50%    -2.224 W
+brightness 10%    -2.327 W
+screen off        -2.19  W
+```
+
+Within ~0.1 W and **not monotonic** — no measurable brightness effect, and the whole display
+accounts for roughly 0.1 W of a 2.2 W system.
+
+That is not a contradiction of AMOLED physics. There genuinely is no backlight, and dimming
+genuinely does cut emission current — but an AMOLED only spends power on *lit* pixels, and a
+dark KDE desktop is mostly unlit, so there is little to give back. On a full-screen white page
+the saving would be far larger. Brightness matters in proportion to how much of the screen is
+actually lit.
+
+> Caveat: with no real panel driver, DPMS-off through simpledrm probably blanks scan-out
+> rather than commanding the panel down. So 0.1 W measures what the *content* costs, and
+> likely understates what a truly powered-down panel would save.
+
+Idle draw is **~2.2–2.3 W**, giving roughly **12 hours** from a 27.1 Wh pack — better than the
+7 h figure that earlier SSH-driven measurements suggested. Read every SSH-measured power
+figure as inflated by about half a watt.
+
 ### Still to do
 
 The **charger** side of the SM5705 (0x49) and the **MUIC** (0x25) are reachable but undriven.

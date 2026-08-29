@@ -56,7 +56,7 @@ SoC brought up.
 | USB networking + SSH | ✅ | RNDIS+ACM configfs gadget → root SSH over USB (the dev lifeline) |
 | Wi‑Fi (WCN3990) | ✅ | 802.11ac, 866.7 MBit/s link rate (VHT‑MCS 9, 80 MHz, 2 streams), auto‑connects at boot; fixed by relocating `wlan_mem` into HLOS‑owned DDR — see [`docs/WIFI.md`](docs/WIFI.md) |
 | Native display / brightness / DPMS | 🚧 | dual‑DSI ANA38401 panel; needs the ≥6.16 bonded‑cmd‑mode DPU fixes (6.18 tree staged) |
-| Battery level reporting | ✅ | voltage and percentage from `VPH_PWR` on pm8150's ADC, with a low‑battery warning — see [`docs/BATTERY.md`](docs/BATTERY.md) |
+| Brightness | ✅ | software dimming via KWin (Plasma 6), since the panel has no hardware backlight interface. Measured cost of the whole display on a dark desktop: ~0.1 W |
 | Power button, shutdown, reboot | ✅ | power key is the PMIC PON block, not a GPIO; power‑off and reboot go through PMIC `PS_HOLD` because **PSCI `SYSTEM_OFF`/`SYSTEM_RESET` both hang on this firmware** — see [`docs/POWER.md`](docs/POWER.md) |
 | Fuel gauge + charge detection | ✅ | the battery is not on the Qualcomm PMIC at all — Samsung fits an **SM5705** charger + fuel gauge + MUIC on I²C. Driver written from scratch: real state of charge, voltage, OCV and current, so charging is detected properly |
 | USB host — keyboard, SSD, hub | ✅ | dual‑role port with a runtime `usb-role` switch, VBUS sourced from the SM5705 boost. A 4 TB bus‑powered SSD runs off it — at USB 2.0; SuperSpeed is still unsolved, see [`docs/USB_HOST.md`](docs/USB_HOST.md) |
@@ -140,8 +140,8 @@ docs/
                     zram, touch text selection, Electron/Wayland, routing.
   USB_HOST.md       Host mode, VBUS from the SM5705, and why SuperSpeed
                     does not work yet.
-  BATTERY.md        Reading the battery through the one PMIC the SPMI arbiter
-                    lets us touch.
+  BATTERY.md        The SM5705 fuel gauge, why pm8150b is a closed door, and
+                    how to measure power without fooling yourself.
   POWER.md          Power button, shutdown and reboot: why PSCI cannot be used
                     here, and why the console lies about it.
 kernel/
