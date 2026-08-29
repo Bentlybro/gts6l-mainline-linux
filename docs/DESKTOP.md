@@ -426,3 +426,91 @@ Those came out of an adversarial review pass: 28 candidate findings, 4 survived
 refutation. All four are in the "would look like flaky hardware" category rather
 than the "obvious on first use" category, which is exactly the kind worth writing
 down.
+
+---
+
+## 7. A screenshot button on the right of the panel
+
+The power+volume-down chord works, but a button is easier — and on a tablet a
+one-tap target beats a two-key chord. `tools/tabs6-screenshot` takes the shot;
+`tools/tabs6-screenshot-tray.py` puts a button in the system tray.
+
+    tap the tray icon -> full-screen PNG
+                      -> copied to the clipboard, ready to paste
+                      -> saved to ~/Pictures/Screenshots/
+
+### Getting a button on the RIGHT is harder than it sounds
+
+Plasma 6 on Fedora ships **no standalone Quick Launch applet**. The only
+launcher-capable plasmoid installed is `icontasks`, which lives with the task
+manager on the **left** of the panel:
+
+```
+AppletOrder=3;4;5;6;7;22;23
+             │ │ │ └── 6 = marginsseparator: everything after it is right-aligned
+             │ │ └──── 5 = icontasks (launchers live here, so: left)
+             │ └────── 4 = pager
+             └──────── 3 = kickoff
+```
+
+A `.desktop` file added to `icontasks`'s `launchers=` list works fine and is the
+simplest option, but it can only ever sit on the left.
+
+### Qt's QSystemTrayIcon does not work here
+
+PySide6 is installed, so `QSystemTrayIcon` looked like the answer. It is not:
+
+    isSystemTrayAvailable() -> True
+    tray.isVisible()        -> True
+    SNI names on the bus    -> NONE
+
+No `org.kde.StatusNotifierItem-*` name ever appears. Tested with
+`QT_QPA_PLATFORMTHEME` set to `kde`, `generic`, `gnome` and unset, on the
+`wayland` platform, with the icon resolving (`QIcon.fromTheme("spectacle")` is
+not null). It silently does nothing — no warning, no error.
+
+### So speak the tray protocol directly
+
+The tray is only D-Bus, and `python3-gobject` is present, so the item is
+implemented directly with GLib/Gio: own `org.kde.StatusNotifierItem-<pid>-1`,
+export `/StatusNotifierItem`, and call `RegisterStatusNotifierItem` on
+`org.kde.StatusNotifierWatcher`. No toolkit involved, nothing to fail quietly.
+
+Two things to get right:
+
+**The property getter takes five arguments, not seven.** PyGObject calls it as
+`(connection, sender, object_path, interface_name, property_name)` — no `GError`
+and no `user_data`, unlike the method-call closure which does get seven. Getting
+it wrong throws on *every* property read:
+
+    TypeError: TrayItem.on_get() missing 1 required positional argument: '_err'
+
+and the only visible symptom is that the icon never appears, because Plasma
+cannot read `Id`, `IconName` or `Status` and so has nothing to draw. The bus name
+still registers, so it looks like it worked.
+
+**`ItemIsMenu` must be false**, or a tap opens a context menu instead of calling
+`Activate`, and one-tap capture is the entire point.
+
+It also re-registers when `org.kde.StatusNotifierWatcher` reappears, so the icon
+survives a plasmashell restart instead of vanishing permanently.
+
+### Clipboard: `--copy-image` does not work either
+
+`spectacle --copy-image` leaves the clipboard offering only
+`application/x-kde-onlyReplaceEmpty`; `wl-paste --type image/png` returns
+nothing, and klipper's history shows a broken image entry (`-1x-1`). The Wayland
+clipboard offer dies with the process that made it and klipper is not persisting
+it. So the file is copied afterwards with `wl-copy`, which forks a helper that
+keeps serving the data until something replaces it. Verified by round-trip:
+
+    wl-paste --list-types            -> image/png
+    wl-paste --type image/png > f    -> valid PNG, 2560x1600, 2.7 MB
+
+### Judge the file, not the exit status
+
+Same trap as the chord daemon: Spectacle is `KDBusService::Unique`, so when an
+instance is already running your process forwards its argv and exits 0
+immediately while the capture happens elsewhere. Both the script and the tray
+lead with `--new-instance`, wait for the file with a deadline, and stop as soon
+as a spelling is *accepted* rather than retrying and queueing duplicate captures.

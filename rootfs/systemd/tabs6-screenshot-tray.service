@@ -1,0 +1,18 @@
+[Unit]
+Description=Screenshot button in the Plasma system tray
+After=plasma-plasmashell.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+Environment=QT_QPA_PLATFORM=wayland
+Environment=XDG_SESSION_TYPE=wayland
+# DISPLAY is set in this session, so without QT_QPA_PLATFORM Qt picks xcb
+# and publishes to the legacy X11 tray, which Plasma 6 does not provide -
+# the icon then exists but is visible nowhere.
+ExecStart=/usr/bin/python3 /usr/local/bin/tabs6-screenshot-tray.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=plasma-workspace.target

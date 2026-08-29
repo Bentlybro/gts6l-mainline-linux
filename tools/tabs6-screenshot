@@ -1,0 +1,85 @@
+#!/bin/bash
+# Tab S6 panel screenshot button.
+#
+# Takes a full-screen shot, puts it on the clipboard so it can be pasted
+# straight into whatever you are working in, AND keeps a copy on disk so it is
+# not lost the moment you copy something else.
+#
+# Runs as the desktop user from a .desktop launcher, so the Wayland environment
+# is already correct - unlike tabs6-powerkeyd, which is root and has to build it
+# by hand. Spectacle aborts outright without QT_QPA_PLATFORM/WAYLAND_DISPLAY, so
+# they are asserted anyway for the case where this is invoked from somewhere
+# less well-behaved.
+set -u
+
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+export XDG_SESSION_TYPE="${XDG_SESSION_TYPE:-wayland}"
+
+DIR="${TABS6_SHOT_DIR:-$HOME/Pictures/Screenshots}"
+mkdir -p "$DIR"
+FILE="$DIR/Screenshot_$(date +%Y%m%d_%H%M%S).png"
+
+# -b background (no GUI)   -f fullscreen        -n no Spectacle notification
+# -d 400ms so the panel click highlight has gone before the shot is taken
+#
+# Note there is no --copy-image here, deliberately. It does not work on this
+# setup: after `spectacle --copy-image` the clipboard offers only
+# `application/x-kde-onlyReplaceEmpty` and `wl-paste --type image/png` returns
+# nothing, while klipper's history shows a broken image entry ("-1x-1"). The
+# Wayland clipboard offer dies with the process that made it, and klipper is not
+# persisting the image. So the file is copied afterwards with wl-copy, which
+# forks a helper that keeps serving the data until something replaces it.
+CANDIDATES=(
+    "--new-instance --background --fullscreen --nonotify --delay 400 --output"
+    "--background --fullscreen --nonotify --delay 400 --output"
+    "-b -f -n -d 400 -o"
+)
+
+copy_to_clipboard() {
+    # wl-copy backgrounds itself and owns the selection until replaced.
+    if command -v wl-copy >/dev/null 2>&1; then
+        wl-copy --type image/png < "$1" >/dev/null 2>&1 &
+        # Give it a moment to actually take ownership before we exit.
+        sleep 0.4
+        return 0
+    fi
+    return 1
+}
+
+notify() {
+    # Best effort only; never let a missing notifier fail the screenshot.
+    command -v notify-send >/dev/null 2>&1 && \
+        notify-send -a Screenshot -i "$2" -t 3000 "$1" "${3:-}" >/dev/null 2>&1
+    return 0
+}
+
+for opts in "${CANDIDATES[@]}"; do
+    # shellcheck disable=SC2086
+    spectacle $opts "$FILE" >/dev/null 2>&1
+    rc=$?
+
+    # Spectacle can exit 0 having only queued the work in an already-running
+    # instance, so wait for the file rather than trusting the exit status. But
+    # only bother waiting if this spelling was actually accepted.
+    if [ $rc -eq 0 ]; then
+        for _ in $(seq 1 40); do
+            [ -s "$FILE" ] && break
+            sleep 0.2
+        done
+        if [ -s "$FILE" ]; then
+            if copy_to_clipboard "$FILE"; then
+                notify "Screenshot copied" "$FILE" "Ready to paste. Saved as ${FILE##*/}"
+            else
+                notify "Screenshot saved" "$FILE" "No clipboard tool; saved as ${FILE##*/}"
+            fi
+            exit 0
+        fi
+        # Accepted but produced nothing: trying another spelling would only
+        # queue a second capture, so stop here.
+        break
+    fi
+done
+
+notify "Screenshot failed" "dialog-error" "Nothing was captured"
+exit 1

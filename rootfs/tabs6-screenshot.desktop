@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Screenshot
+GenericName=Take a screenshot
+Comment=Capture the whole screen, copy it to the clipboard and save a copy
+Exec=/usr/local/bin/tabs6-screenshot
+Icon=spectacle
+Terminal=false
+Categories=Utility;Graphics;
+Keywords=screenshot;capture;screen;grab;
+StartupNotify=false
