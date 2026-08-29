@@ -846,3 +846,25 @@
 		monitored-battery = <&gts6l_battery>;
 	};
 };
+
+/* Power off.
+ *
+ * Mainline sm8150.dtsi has no PS_HOLD node, so drivers/power/reset/msm-poweroff.c
+ * ("qcom,pshold", driver name msm-restart) had no device to bind to and never
+ * registered a power-off handler. reboot(RB_POWER_OFF) therefore did nothing,
+ * and systemd fell back to a reboot - which is why choosing "Power Off" ended at
+ * "systemd-shutdown: Rebooting." and then hung on that screen.
+ *
+ * Address taken from Samsung own device tree, which has
+ * restart@c264000 { compatible = "qcom,pshold"; }. The driver only maps the
+ * first reg, so the tcsr-boot-misc-detect range Samsung also lists is not needed.
+ *
+ * The driver registers a RESTART handler too, but at priority 128, below PSCI at
+ * SYS_OFF_PRIO_FIRMWARE - so reboot, which already works, keeps going through
+ * PSCI and only power-off gains a new path. */
+&soc {
+	restart@c264000 {
+		compatible = "qcom,pshold";
+		reg = <0x0 0x0c264000 0x0 0x4>;
+	};
+};

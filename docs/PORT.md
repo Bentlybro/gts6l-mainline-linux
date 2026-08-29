@@ -58,7 +58,9 @@ DSC (from the device's downstream panel node).
 | Wi-Fi (WCN3990) | ✅ | 802.11ac, 866.7 MBit/s link (VHT-MCS 9, 80 MHz, 2 streams); auto-connects at boot — [`WIFI.md`](WIFI.md) |
 | Native display / brightness / DPMS | 🚧 | needs ≥6.16 bonded-cmd-mode DPU; 6.18 tree staged |
 | Battery level reporting | ✅ | voltage + percentage via `VPH_PWR` on pm8150's ADC — [`BATTERY.md`](BATTERY.md) |
-| Charge detection / fuel gauge | ❌ | **not possible.** The SPMI arbiter denies the applications EE all of SID 2, so pm8150b — the charger and fuel-gauge PMIC — is unreachable. `VBAT_SNS` included |
+| Power button (lock / wake / menu) | ✅ | PMIC PON KPDPWR, not a GPIO — [`POWER.md`](POWER.md) |
+| Shutdown + reboot | ✅ | via PMIC PS_HOLD from a reboot notifier; **PSCI `SYSTEM_OFF`/`SYSTEM_RESET` both hang here** and must be overtaken. SMPL disarmed or it powers straight back up — [`POWER.md`](POWER.md) |
+| Charge detection / fuel gauge | 🚧 | pm8150b is unreachable (SPMI arbiter denies all of SID 2), but the battery is **not on the Qualcomm PMIC** — Samsung fits an **SM5705** charger+gauge+MUIC: gauge `0x71` on `i2c11`, charger `0x49` + MUIC `0x25` on `i2c4` (both answer already). No mainline driver yet |
 | S Pen (Wacom W9021) | ⬜ | wacom@0x56 on i2c14, irq gpio 5, pdct 53, fwe 11 |
 | Bluetooth (WCN3990 UART) | ⬜ | |
 | Audio | ⬜ | |

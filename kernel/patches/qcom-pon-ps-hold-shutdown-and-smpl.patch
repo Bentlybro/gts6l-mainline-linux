@@ -1,0 +1,184 @@
+--- a/drivers/power/reset/qcom-pon.c
++++ b/drivers/power/reset/qcom-pon.c
+@@ -14,6 +14,32 @@
+ 
+ #define PON_SOFT_RB_SPARE		0x8f
+ 
++/*
++ * PS_HOLD reset control: what the PMIC does when PS_HOLD is released.
++ * Releasing PS_HOLD is what actually cuts power, but the PMIC decides what that
++ * MEANS from these registers, and the bootloader leaves the type set to warm
++ * reset - so asking for a power off rebooted the device instead.
++ */
++#define PON_PS_HOLD_RST_CTL		0x5a
++#define PON_PS_HOLD_RST_CTL2		0x5b
++#define PON_PS_HOLD_ENABLE		BIT(7)
++#define PON_PS_HOLD_TYPE_MASK		GENMASK(3, 0)
++#define PON_PS_HOLD_TYPE_WARM_RESET	0x01
++#define PON_PS_HOLD_TYPE_SHUTDOWN	0x04
++
++/*
++ * SMPL - Sudden Momentary Power Loss - makes the PMIC power the machine back up
++ * by itself after a brief loss of supply. The bootloader leaves it armed, and
++ * releasing PS_HOLD looks exactly like the event it is watching for, so the
++ * tablet powered off and then immediately came back.
++ *
++ * Offsets confirmed against the live PMIC rather than assumed: 0x70 reads back
++ * as pull-up control and 0x71 as debounce, matching the Qualcomm PON layout,
++ * and 0x7f reads 0x80 - SMPL_EN set.
++ */
++#define PON_SMPL_CTL			0x7f
++#define PON_SMPL_EN			BIT(7)
++
+ #define GEN1_REASON_SHIFT		2
+ #define GEN2_REASON_SHIFT		1
+ 
+@@ -24,6 +50,7 @@
+ 	struct regmap *regmap;
+ 	u32 baseaddr;
+ 	struct reboot_mode_driver reboot_mode;
++	struct notifier_block reboot_nb;
+ 	long reason_shift;
+ };
+ 
+@@ -44,6 +71,124 @@
+ 	return ret;
+ }
+ 
++/*
++ * Tell the PMIC that the next PS_HOLD release means "shut down", not "reset".
++ *
++ * The bootloader on this board leaves PS_HOLD_RST_CTL set to warm reset (0x01),
++ * and nothing in mainline ever changes it - qcom-pon only writes the reboot
++ * REASON, never the reset TYPE. So a power-off request reached
++ * drivers/power/reset/msm-poweroff.c, PS_HOLD was released as intended, and the
++ * PMIC dutifully warm-reset the machine. From userspace that looked like a
++ * shutdown that rebooted instead of powering off.
++ *
++ * Run as a POWER_OFF_PREPARE handler so it happens before whichever handler
++ * actually drops PS_HOLD, and only on power off - reboot is left alone, since
++ * it already works through PSCI and should keep the reset type it has.
++ *
++ * The enable bit is cleared around the change, as the vendor driver does, so
++ * the PMIC never latches a half-written type.
++ */
++static int pm8916_pon_set_ps_hold_type(struct pm8916_pon *pon, unsigned int type)
++{
++	unsigned int val = 0;
++	int ret;
++
++	ret = regmap_update_bits(pon->regmap,
++				 pon->baseaddr + PON_PS_HOLD_RST_CTL2,
++				 PON_PS_HOLD_ENABLE, 0);
++	if (ret)
++		goto err;
++
++	/* The PMIC needs a moment before it will accept the new type. */
++	udelay(100);
++
++	ret = regmap_update_bits(pon->regmap,
++				 pon->baseaddr + PON_PS_HOLD_RST_CTL,
++				 PON_PS_HOLD_TYPE_MASK, type);
++	if (ret)
++		goto err;
++
++	ret = regmap_update_bits(pon->regmap,
++				 pon->baseaddr + PON_PS_HOLD_RST_CTL2,
++				 PON_PS_HOLD_ENABLE, PON_PS_HOLD_ENABLE);
++	if (ret)
++		goto err;
++
++	/*
++	 * Read back and shout about it on the console. By the time a sys-off
++	 * handler runs the journal is already gone, so this line on screen is
++	 * the only evidence of whether the PMIC actually took the setting.
++	 */
++	regmap_read(pon->regmap, pon->baseaddr + PON_PS_HOLD_RST_CTL, &val);
++	pr_emerg("qcom-pon: PS_HOLD type wanted 0x%02x, reads back 0x%02x\n",
++		 type, (unsigned int)(val & PON_PS_HOLD_TYPE_MASK));
++
++	return 0;
++
++err:
++	/*
++	 * Not fatal: report it and let the shutdown continue, which leaves the
++	 * behaviour exactly as it was before this handler existed.
++	 */
++	pr_emerg("qcom-pon: failed to set PS_HOLD type 0x%02x: %d\n", type, ret);
++	return ret;
++}
++
++/*
++ * Done from a reboot notifier rather than a sys-off handler, deliberately.
++ *
++ * Reboot notifiers run at the very top of kernel_shutdown_prepare(), BEFORE
++ * device_shutdown(). sys-off handlers run after it. That matters twice over on
++ * this device: device_shutdown() tears down simpledrm, so the console freezes
++ * on its last frame and nothing printed afterwards is ever visible - which is
++ * why "Powering off." is the last line on screen and even the kernel's own
++ * "reboot: Power down" never appears - and it also shuts down the SPMI
++ * controller this write has to go through.
++ *
++ * Running here means the PMIC is definitely still reachable and the readback
++ * below is actually readable on screen.
++ *
++ * Restart re-asserts warm reset on purpose: the type is a sticky PMIC setting,
++ * so once a power-off has selected shutdown it stays selected, and a later
++ * reboot that released PS_HOLD would silently power the machine off instead of
++ * restarting it. Setting it explicitly on each path makes the outcome depend on
++ * what was asked for, not on what happened last time.
++ */
++static int pm8916_pon_reboot_notify(struct notifier_block *nb,
++				    unsigned long action, void *data)
++{
++	struct pm8916_pon *pon = container_of(nb, struct pm8916_pon, reboot_nb);
++
++	switch (action) {
++	case SYS_POWER_OFF: {
++		unsigned int smpl = 0;
++		int ret;
++
++		pm8916_pon_set_ps_hold_type(pon, PON_PS_HOLD_TYPE_SHUTDOWN);
++
++		/*
++		 * Disarm SMPL, or the PMIC treats the PS_HOLD release as a
++		 * momentary supply glitch and powers the machine straight back
++		 * up. Only done for power off - a restart WANTS to come back.
++		 */
++		ret = regmap_update_bits(pon->regmap,
++					 pon->baseaddr + PON_SMPL_CTL,
++					 PON_SMPL_EN, 0);
++		regmap_read(pon->regmap, pon->baseaddr + PON_SMPL_CTL, &smpl);
++		pr_emerg("qcom-pon: SMPL disable ret %d, SMPL_CTL now 0x%02x (want bit7 clear)\n",
++			 ret, smpl);
++		break;
++	}
++	case SYS_RESTART:
++	case SYS_HALT:
++	default:
++		pm8916_pon_set_ps_hold_type(pon, PON_PS_HOLD_TYPE_WARM_RESET);
++		break;
++	}
++
++	return NOTIFY_DONE;
++}
++
+ static int pm8916_pon_probe(struct platform_device *pdev)
+ {
+ 	struct pm8916_pon *pon;
+@@ -80,6 +225,15 @@
+ 		}
+ 	}
+ 
++	/* Priority 1 so this runs before msm-poweroff's notifier, which may be
++	 * asked to release PS_HOLD and needs the type already selected. */
++	pon->reboot_nb.notifier_call = pm8916_pon_reboot_notify;
++	pon->reboot_nb.priority = 1;
++	error = devm_register_reboot_notifier(&pdev->dev, &pon->reboot_nb);
++	if (error)
++		return dev_err_probe(&pdev->dev, error,
++				     "can't register reboot notifier\n");
++
+ 	platform_set_drvdata(pdev, pon);
+ 
+ 	return devm_of_platform_populate(&pdev->dev);

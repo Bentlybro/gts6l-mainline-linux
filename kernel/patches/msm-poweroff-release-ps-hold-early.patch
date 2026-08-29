@@ -1,0 +1,135 @@
+--- a/drivers/power/reset/msm-poweroff.c
++++ b/drivers/power/reset/msm-poweroff.c
+@@ -15,25 +15,131 @@
+ 
+ static void __iomem *msm_ps_hold;
+ 
++/*
++ * Diagnostic. device_shutdown() tears down simpledrm, so by the time a sys-off
++ * handler runs the console is frozen on its last frame and nothing it prints is
++ * ever visible - not even the kernel's own "reboot: Power down". Setting this
++ * releases PS_HOLD from the reboot notifier instead, which runs BEFORE
++ * device_shutdown(), so if releasing PS_HOLD cuts power the machine dies right
++ * there, and if it does not we get to see that said so on screen.
++ *
++ * Safe at that point in the sequence: systemd has already unmounted, remounted
++ * read-only and synced before it calls reboot().
++ *
++ *   echo 1 > /sys/module/msm_poweroff/parameters/early_release
++ */
++static bool early_release = true;
++module_param(early_release, bool, 0644);
++MODULE_PARM_DESC(early_release,
++		 "Release PS_HOLD from the reboot notifier, before the console dies");
++
++static int msm_reboot_notify(struct notifier_block *nb, unsigned long action,
++			     void *data)
++{
++	const char *what;
++
++	switch (action) {
++	case SYS_POWER_OFF:
++		what = "power off";
++		break;
++	case SYS_RESTART:
++		what = "restart";
++		break;
++	case SYS_HALT:
++		what = "halt";
++		break;
++	default:
++		return NOTIFY_DONE;
++	}
++
++	pr_emerg("msm-poweroff: %s requested, early_release=%d\n",
++		 what, early_release);
++
++	if (!early_release)
++		return NOTIFY_DONE;
++
++	/*
++	 * Both paths go out through PS_HOLD, and both do it HERE rather than
++	 * from a sys-off handler, because everything after this point on this
++	 * board is unreliable: device_shutdown() runs next and takes simpledrm
++	 * with it, so nothing printed later is ever visible, and something in
++	 * that stretch intermittently hangs - a reboot would sit forever on
++	 * "Rebooting." having already got this far, and a power off never cut
++	 * power at all.
++	 *
++	 * qcom-pon has already selected what the release MEANS, from its own
++	 * notifier at a higher priority: shutdown for a power off (with SMPL
++	 * disarmed so the PMIC does not immediately power back up), warm reset
++	 * for a restart.
++	 *
++	 * Safe here: systemd has already unmounted, remounted read-only and
++	 * synced before it called reboot(). Devices do not get their shutdown
++	 * callbacks, which is the price of not hanging.
++	 */
++	pr_emerg("msm-poweroff: releasing PS_HOLD now\n");
++	writel(0, msm_ps_hold);
++	mdelay(5000);
++	pr_emerg("msm-poweroff: PS_HOLD released and nothing happened\n");
++
++	return NOTIFY_DONE;
++}
++
+ static int do_msm_poweroff(struct sys_off_data *data)
+ {
++	/*
++	 * pr_emerg because by this point the journal is gone and the console is
++	 * the only place left to report anything. These two lines are how we
++	 * tell, from a photograph of the screen, whether PS_HOLD was reached at
++	 * all and whether releasing it did anything.
++	 */
++	pr_emerg("msm-poweroff: releasing PS_HOLD (sys-off mode %d)\n",
++		 data ? data->mode : -1);
++
+ 	writel(0, msm_ps_hold);
+ 	mdelay(10000);
+ 
++	pr_emerg("msm-poweroff: PS_HOLD released but power was not cut\n");
++
+ 	return NOTIFY_DONE;
+ }
+ 
++static struct notifier_block msm_reboot_nb = {
++	.notifier_call = msm_reboot_notify,
++	.priority = 0,	/* after qcom-pon has selected the PS_HOLD type */
++};
++
+ static int msm_restart_probe(struct platform_device *pdev)
+ {
++	int ret;
++
+ 	msm_ps_hold = devm_platform_ioremap_resource(pdev, 0);
+ 	if (IS_ERR(msm_ps_hold))
+ 		return PTR_ERR(msm_ps_hold);
+ 
++	ret = devm_register_reboot_notifier(&pdev->dev, &msm_reboot_nb);
++	if (ret)
++		return ret;
++
+ 	devm_register_sys_off_handler(&pdev->dev, SYS_OFF_MODE_RESTART,
+ 				      128, do_msm_poweroff, NULL);
+ 
++	/*
++	 * Registered at HIGH rather than DEFAULT so that releasing PS_HOLD runs
++	 * BEFORE PSCI gets a chance.
++	 *
++	 * PSCI installs its power-off through the legacy pm_power_off pointer,
++	 * which kernel/reboot.c wraps in a handler at SYS_OFF_PRIO_DEFAULT - the
++	 * same priority this used to use. On this board PSCI SYSTEM_OFF goes
++	 * into Samsung secure firmware and never returns, so whenever it won the
++	 * tie the machine printed "Powering off." and then hung with the console
++	 * frozen, and PS_HOLD was never released at all.
++	 *
++	 * Dropping PS_HOLD is the mechanism that actually cuts power on this
++	 * SoC, so it should be tried first and the firmware call left as the
++	 * fallback it deserves to be.
++	 */
+ 	devm_register_sys_off_handler(&pdev->dev, SYS_OFF_MODE_POWER_OFF,
+-				      SYS_OFF_PRIO_DEFAULT, do_msm_poweroff,
++				      SYS_OFF_PRIO_HIGH, do_msm_poweroff,
+ 				      NULL);
+ 
+ 	return 0;

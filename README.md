@@ -56,7 +56,9 @@ SoC brought up.
 | USB networking + SSH | ✅ | RNDIS+ACM configfs gadget → root SSH over USB (the dev lifeline) |
 | Wi‑Fi (WCN3990) | ✅ | 802.11ac, 866.7 MBit/s link rate (VHT‑MCS 9, 80 MHz, 2 streams), auto‑connects at boot; fixed by relocating `wlan_mem` into HLOS‑owned DDR — see [`docs/WIFI.md`](docs/WIFI.md) |
 | Native display / brightness / DPMS | 🚧 | dual‑DSI ANA38401 panel; needs the ≥6.16 bonded‑cmd‑mode DPU fixes (6.18 tree staged) |
-| Battery level reporting | ✅ | voltage and percentage from `VPH_PWR` on pm8150's ADC, with a low‑battery warning; charge detection is impossible because the SPMI arbiter denies all access to pm8150b — see [`docs/BATTERY.md`](docs/BATTERY.md) |
+| Battery level reporting | ✅ | voltage and percentage from `VPH_PWR` on pm8150's ADC, with a low‑battery warning — see [`docs/BATTERY.md`](docs/BATTERY.md) |
+| Power button, shutdown, reboot | ✅ | power key is the PMIC PON block, not a GPIO; power‑off and reboot go through PMIC `PS_HOLD` because **PSCI `SYSTEM_OFF`/`SYSTEM_RESET` both hang on this firmware** — see [`docs/POWER.md`](docs/POWER.md) |
+| Charge detection / fuel gauge | 🚧 | the battery is not on the Qualcomm PMIC at all — Samsung fits an **SM5705** charger + fuel gauge + MUIC on I²C, and it answers; no mainline driver yet |
 | S Pen, Bluetooth, audio | ⬜ | not started |
 
 Read [`docs/PORT.md`](docs/PORT.md) for the full hardware map and
@@ -137,6 +139,8 @@ docs/
                     zram, touch text selection, Electron/Wayland, routing.
   BATTERY.md        Reading the battery through the one PMIC the SPMI arbiter
                     lets us touch.
+  POWER.md          Power button, shutdown and reboot: why PSCI cannot be used
+                    here, and why the console lies about it.
 kernel/
   dts/              sm8150-samsung-gts6lwifi board device tree.
   config/           The kernel .config used for the running build.
