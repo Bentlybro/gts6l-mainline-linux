@@ -1,0 +1,51 @@
+#!/bin/sh
+# Flip the USB-C port between gadget and host.
+#
+#   usb-role            show the current role
+#   usb-role host       become a USB host (plug in a keyboard, hub, stick)
+#   usb-role device     go back to the RNDIS/ACM gadget (SSH over USB)
+#
+# The port is dual-role in the device tree but nothing on this board tells the
+# kernel which way it should be - there is no Type-C controller driver and no ID
+# pin mainline knows about - so it is a manual choice. It resets to device on
+# every boot, deliberately, so the gadget lifeline is always there after a
+# reboot even if Wi-Fi is broken.
+#
+# Note on power: nothing here drives a VBUS boost. That regulator lives in the
+# SM5705, which has no driver yet. A self-powered hub works; a bus-powered
+# keyboard plugged straight into the port may get no power and never enumerate.
+
+set -eu
+
+ROLE_FILE=$(ls /sys/class/usb_role/*/role 2>/dev/null | head -1)
+
+if [ -z "$ROLE_FILE" ]; then
+	echo "usb-role: no USB role switch found." >&2
+	echo "  Needs dr_mode = \"otg\" + usb-role-switch in the DT, and a kernel" >&2
+	echo "  where dwc3 sets allow_userspace_control (see kernel/patches)." >&2
+	exit 1
+fi
+
+case "${1:-}" in
+"")
+	echo "$(cat "$ROLE_FILE")"
+	;;
+host | device | none)
+	echo "$1" > "$ROLE_FILE"
+	sleep 1
+	echo "usb role: $(cat "$ROLE_FILE")"
+	if [ "$1" = host ]; then
+		# Give the hub a moment, then say what turned up.
+		sleep 2
+		# Real devices look like "1-1"; "1-0:1.0" and "usb1" are the root
+		# hubs themselves and are always there, so do not count them.
+		n=$(ls /sys/bus/usb/devices/ 2>/dev/null | grep -cE '^[0-9]+-[0-9]+$' || true)
+		echo "devices attached: $n"
+		[ "$n" -eq 0 ] && echo "(nothing yet - bus-powered devices may need a powered hub)"
+	fi
+	;;
+*)
+	echo "usage: usb-role [host|device|none]" >&2
+	exit 1
+	;;
+esac

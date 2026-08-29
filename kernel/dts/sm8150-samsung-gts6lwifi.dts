@@ -868,3 +868,56 @@
 		reg = <0x0 0x0c264000 0x0 0x4>;
 	};
 };
+
+/* USB dual-role.
+ *
+ * This was pinned to "peripheral" so the RNDIS + ACM gadget could act as the
+ * development lifeline when nothing else worked. Wi-Fi is reliable now, and a
+ * tablet with no built-in keyboard badly wants to be able to host one, so the
+ * port becomes dual-role instead.
+ *
+ * usb-role-switch registers a role switch under /sys/class/usb_role, so the
+ * port can be flipped between device and host at runtime rather than being
+ * fixed at build time - the gadget lifeline stays available when it is wanted.
+ *
+ * Caveat worth knowing before blaming the kernel: nothing here drives a VBUS
+ * boost. The regulator that powers a downstream device lives in the SM5705,
+ * which has no driver yet. A self-powered hub should enumerate; a bus-powered
+ * keyboard plugged straight in may get no power. */
+&usb_1_dwc3 {
+	dr_mode = "otg";
+	usb-role-switch;
+};
+
+/* SM5705 fuel gauge lives here.
+ *
+ * Samsung fits a Silicon Mitus SM5705 - combined charger, fuel gauge and MUIC -
+ * rather than using the Qualcomm PMIC for the battery. Per Samsung own overlay
+ * the gauge is at 0x71 on qupv3_se11_i2c, while the charger at 0x49 and the
+ * MUIC at 0x25 sit on se4, which is already enabled as i2c4. */
+&i2c11 {
+	status = "okay";
+	clock-frequency = <400000>;
+
+	/* sm5705-fuelgauge@71 */
+};
+
+/* The real fuel gauge.
+ *
+ * This replaces the ADC-derived battery entirely. That one read the rail
+ * voltage through pm8150 and mapped it against a textbook Li-ion curve, which
+ * was the best available while pm8150b looked like the only option - but it
+ * cannot see current, so it could never tell charging from discharging, and
+ * charging inflates terminal voltage badly enough that it read 68 percent when
+ * the real gauge said 46. */
+&i2c11 {
+	sm5705_fg: fuelgauge@71 {
+		compatible = "siliconmitus,sm5705-fuelgauge";
+		reg = <0x71>;
+		monitored-battery = <&gts6l_battery>;
+	};
+};
+
+/ {
+	/delete-node/ adc-battery;
+};

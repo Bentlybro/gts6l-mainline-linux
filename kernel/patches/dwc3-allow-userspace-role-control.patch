@@ -1,0 +1,25 @@
+--- a/drivers/usb/dwc3/drd.c
++++ b/drivers/usb/dwc3/drd.c
+@@ -514,6 +514,22 @@
+ 	dwc3_role_switch.set = dwc3_usb_role_switch_set;
+ 	dwc3_role_switch.get = dwc3_usb_role_switch_get;
+ 	dwc3_role_switch.driver_data = dwc;
++
++	/*
++	 * Let userspace drive the role from
++	 * /sys/class/usb_role/<dev>/role. usb_role_switch_is_visible() hides
++	 * that attribute entirely unless this is set, which is why the switch
++	 * appeared under /sys/class/usb_role with no way to operate it.
++	 *
++	 * This tablet has no built-in keyboard and nothing on the board tells
++	 * the kernel which way round the port should be - there is no Type-C
++	 * controller driver and no ID pin wired to anything mainline knows
++	 * about, so the decision can only come from the user. Defaulting stays
++	 * peripheral, which keeps the RNDIS gadget available as the fallback
++	 * way in; flipping to host is a deliberate act.
++	 */
++	dwc3_role_switch.allow_userspace_control = true;
++
+ 	dwc->role_sw = usb_role_switch_register(dwc->dev, &dwc3_role_switch);
+ 	if (IS_ERR(dwc->role_sw))
+ 		return PTR_ERR(dwc->role_sw);

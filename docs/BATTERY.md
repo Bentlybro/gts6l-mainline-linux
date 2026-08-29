@@ -1,9 +1,16 @@
 # Battery reporting on a PMIC you are not allowed to talk to
 
-**Status: working, with caveats.** `/sys/class/power_supply/adc-battery` reports voltage,
-a percentage, and a discharging status, so the desktop shows a battery and warns when it
-gets low. It does this from the *wrong PMIC*, because the right one is unreachable — and
-that turns out to be the whole story.
+**Status: working properly, via the SM5705 fuel gauge.** `/sys/class/power_supply/sm5705-fuelgauge`
+reports real state of charge, voltage, open-circuit voltage and **current**, so charging is
+detected correctly and upower gives time-to-full and time-to-empty.
+
+> **Most of this document describes a dead end, and it is kept because the dead end is
+> instructive.** The premise below — that the only way to see the battery is a Qualcomm PMIC
+> ADC, with the real gauge locked behind an unreachable pm8150b — is *wrong*. The battery is
+> not on the Qualcomm PMIC at all. Samsung fit a **Silicon Mitus SM5705** (charger + fuel
+> gauge + MUIC) on I²C and use that instead. Skip to [The SM5705](#the-sm5705-the-actual-answer)
+> for what actually works; read the middle for why pm8150b is a closed door, which is still
+> true and still worth knowing.
 
 ---
 
@@ -151,18 +158,80 @@ adc-battery {
 
 with `CONFIG_GENERIC_ADC_BATTERY=y`.
 
-## What this is and is not
+## The SM5705: the actual answer
 
-- The percentage is measured from **VPH_PWR, not the battery terminals**, so it reads
-  slightly low and dips under load.
-- The OCV curve is a **nominal 4.4 V Li-ion** one for the 7040 mAh pack, not a measured
-  one. Absolute percentage is approximate; the trend is sound.
-- **Charging cannot be detected at all**, for the same arbiter reason.
-- The one calibration still outstanding: confirm the reading climbs to roughly 4.2–4.4 V
-  on the charger, and adjust `ocv-capacity-table-0` if it does not.
+Everything above is built on the belief that the Qualcomm PMIC is the only way to see the
+battery. Samsung's own dtbo overlay says otherwise:
 
-Treat it as a good indicator, not a gauge. Given the alternative was no battery reading
-whatsoever, that is a reasonable place to land.
+```
+sm5705-fuelgauge@71   on qupv3_se11_i2c    compatible "sm5705-fuelgauge"
+sm5705@49             on qupv3_se4_i2c     compatible "sm,sm5705"
+muic-sm5705@25        on qupv3_se4_i2c
+battery               compatible "samsung,sec-battery"
+```
+
+A **Silicon Mitus SM5705** — combined charger, fuel gauge and MUIC — the same class of part
+as the MAX77705 on the z3s. Enabling `i2c11` put the gauge on the bus immediately, and the
+charger and MUIC were already reachable on `i2c4`.
+
+### Working out the registers without a datasheet
+
+There is no public datasheet and no mainline driver. The map was established by reading the
+live part against a reference we already trusted — the calibrated ADC reading of the rail —
+and checking each candidate *tracked reality over time*:
+
+| reg | value | decoded | check |
+|---|---|---|---|
+| `0x07` | `0x200a` | 4.005 V | ADC said 4.039 V |
+| `0x06` | `0x1e82` | 3.813 V | below terminal, as OCV should be while charging |
+| `0x05` | `0x2e0c` | 46.23 % | climbed 46.23 → 46.29 → 46.34 → 46.39 |
+| `0x08` | `0x0919` | 1.14 A | plausible charge current |
+
+Voltage agreed within 30 mV on every sample, SOC only ever rose while charging, current
+stayed sane. **Only these four registers are used** — the rest of the map is left alone
+rather than guessed at.
+
+Driver: `kernel/drivers/sm5705_fuelgauge.c`, `CONFIG_BATTERY_SM5705`.
+
+### What it changes
+
+```
+status      = Charging          <- the ADC battery could never know this
+capacity    = 48                <- the voltage curve claimed 68
+voltage_now = 3999511
+voltage_ocv = 3822265
+current_now = 1210937
+```
+
+Two things worth drawing out:
+
+- **Status is now a measurement.** A voltage-only source cannot distinguish charging from
+  discharging at all, so the honest choice there was to always claim discharging.
+- **The accuracy gap was large.** 46 % against 68 %. Charging lifts terminal voltage well
+  above open-circuit — visible right in the registers, 4.00 V terminal vs 3.81 V OCV — so a
+  voltage-derived percentage reads high *exactly when it is plugged in*.
+
+The ADC-derived battery has been **deleted** from the device tree rather than left alongside;
+two batteries only confuse the desktop, and this one is strictly better.
+
+upower needs no help:
+
+```
+state: charging   percentage: 48%   energy-rate: 4.21738 W
+energy: 14.87 Wh of 30.976 Wh       time to full: 3.8 hours
+```
+
+### It also makes battery life arithmetic
+
+With only a voltage, runtime was unanswerable without measuring a discharge slope for an
+hour. With current it is a sum — watts = volts × amps, hours = remaining Wh ÷ watts — and it
+takes seconds.
+
+### Still to do
+
+The **charger** side of the SM5705 (0x49) and the **MUIC** (0x25) are reachable but undriven.
+Beyond charge control, the charger holds the **VBUS boost** — which is what a bus-powered
+USB device needs when the port is in host mode (see [`POWER.md`](POWER.md)).
 
 ## The transferable lesson
 
