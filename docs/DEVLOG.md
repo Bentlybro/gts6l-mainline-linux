@@ -829,3 +829,46 @@ It works. With the threshold turned down for testing, the tablet went idle, susp
 vanished from the network entirely — the gateway reporting the host unreachable, because
 with Wi-Fi down there was nothing left to wake it. The power button brings it back.
 [`SLEEP.md`](SLEEP.md) has the detail.
+
+## Postscript: buttons, and what a distro upgrade quietly takes away
+
+Two smaller things closed out the same evening, and both were more interesting
+than they had any right to be.
+
+The first was a **screenshot button**. The Android chord — power plus volume down
+— was easy, because both keys turn out to be on the PMIC PON block and the power
+key daemon already had the hardware open. It worked on the first real press, and
+was still reported as "it locks the tablet", which it was not: `lock-sessions` was
+never called once, and the capture it produced was a full-size PNG of 16 KB
+against 2.6 MB for a real one. The screen was going *dark*, not locking, and the
+screenshot had faithfully recorded the dark screen. A button is better on a tablet
+anyway, and that is where the evening went sideways: Plasma 6 on Fedora ships no
+Quick Launch applet, so a launcher can only live on the left of the panel, and
+Qt's `QSystemTrayIcon` — with PySide6 installed and every API call returning the
+reassuring answer — never registers a tray item at all. The tray is only D-Bus in
+the end, so it is spoken directly. Which then displayed nothing, because
+PyGObject calls a property getter with five arguments rather than seven, and the
+resulting exception on every property read leaves the item registered and blank.
+
+The second was discovering that a **distro upgrade silently reverts anything you
+patched in a package-owned file**. Plasma went 6.6.4 to 6.7.4 and took the lock
+screen fixes with it — no warning, no `.rpmsave`, nothing but an mtime that had
+become the package build date. The keyboard survived only because maliit happened
+not to be in that transaction. Re-applying the patch then broke the lock screen
+*worse*, in exactly the way this project had already been bitten once: a second
+`Component.onCompleted` on an element that already had one, which Plasma answers
+by silently substituting the plain built-in locker.
+
+There is a pattern in all of this that is worth stating plainly, because it cost
+more time than any of the individual bugs. Every one of these failures reported
+success. `systemctl enable --now` starts a service that will never start at boot.
+`isSystemTrayAvailable()` returns True for a tray that will never appear. A patch
+script logs "patched" over a file that no longer parses. Spectacle exits 0 having
+captured nothing. `systemctl suspend` says "Access denied" about a masked unit.
+
+The habit that actually caught them was refusing to accept the success signal and
+insisting on the artefact instead: reboot rather than `enable --now`, round-trip
+the clipboard back to a file, crop the panel out of a screenshot to see the icon
+with your own eyes, grep the journal from a timestamp taken *before* the action
+rather than a relative window that overlaps the failure you are comparing against.
+Four separate times that turned a confident "verified" into "actually, no".
