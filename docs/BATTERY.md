@@ -342,6 +342,15 @@ it can.
 > You cannot charge and use USB host mode at once — one port, and in host mode the chip is
 > sourcing power rather than accepting it.
 
+### A caveat on the runtime figures above
+
+All of the battery-life arithmetic here assumes the tablet is **awake**, because when it was
+written this port could not suspend at all. It can now (s2idle — see [`SLEEP.md`](SLEEP.md)),
+and `tabs6-idled` suspends it after 20 minutes idle on battery, so real-world standby is far
+better than a straight capacity-divided-by-draw figure suggests. The awake numbers are still
+the right ones for "how long can I actually work on this", which is what they were measured
+for.
+
 ### Still to do
 
 The **charger** side of the SM5705 (0x49) and the **MUIC** (0x25) are reachable but undriven.

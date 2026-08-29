@@ -62,6 +62,7 @@ DSC (from the device's downstream panel node).
 | Shutdown + reboot | ✅ | via PMIC PS_HOLD from a reboot notifier; **PSCI `SYSTEM_OFF`/`SYSTEM_RESET` both hang here** and must be overtaken. SMPL disarmed or it powers straight back up — [`POWER.md`](POWER.md) |
 | Suspend / resume / idle sleep | ✅ | s2idle; the touchscreen survives it and the power button wakes it. Fedora ships `sleep.target`/`suspend.target` **masked**, which logind reports misleadingly as "Access denied". PowerDevil ignores its own profile config (on 6.6.4 *and* 6.7.4), so idle sleep is `tools/tabs6-idled.py` — [`SLEEP.md`](SLEEP.md) |
 | Screenshots | ✅ | power + volume-down chord, and a system-tray button; both copy to the clipboard — [`DESKTOP.md`](DESKTOP.md) |
+| RTC / system clock | 🚧 | reads and alarms work on `rtc-pm8xxx`, which is what suspend needs. `CONFIG_RTC_DRV_EFI` must stay **off** — rtc-efi claimed `rtc0` and could not be read at all, which made `timedatectl` fail outright. The counter can never be written: the SPMI arbiter denies writes to `0x6046`. systemd-timesyncd covers the gap — [`SLEEP.md`](SLEEP.md) |
 | Fuel gauge + charge detection | ✅ | **SM5705** on I²C, not the Qualcomm PMIC — real SOC, OCV, voltage and current, so charging is detected properly. Driver written from scratch, `kernel/drivers/sm5705_fuelgauge.c` — [`BATTERY.md`](BATTERY.md) |
 | USB host (keyboard, SSD, hub) | ✅ | `dr_mode = otg` + role switch + VBUS from the SM5705 boost; `usb-role host`. Runs at USB 2.0 only — SuperSpeed unsolved, see [`USB_HOST.md`](USB_HOST.md) |
 | USB SuperSpeed | 🚧 | host, PHY and redriver all check out; orientation exhausted. Prime suspects: the cable, then `phy-qcom-qmp-combo.c` pinning orientation to NORMAL with no Type-C port manager to correct it |
@@ -130,6 +131,14 @@ suggests they need anything the other subsystems did not.
   The ESP filesystem is also only 95 MB even though the cache partition is 400 MB, and
   the kernel `Image` alone is ~38 MB — there is room for one Image and little else, so
   keep the rollback copy off the ESP.
+
+  And the trap on the other side of that: the boot chain reads **only** the cache ESP,
+  while Fedora's own kernel packages install into `/boot` on the root filesystem, which
+  nothing in the boot path ever looks at. Two distro kernels (6.19.10 and 7.1.10) are
+  sitting there right now, installed and never booted, while the running kernel is our
+  own build on the 6.12 base. `dnf` updating the kernel and rebooting therefore changes
+  nothing — only an `Image` copied onto the ESP takes effect. Verify with `uname -v`
+  afterwards, never with the package list.
 - **SPMI PMIC children are not instantiated** unless `MFD_SPMI_PMIC` is enabled. The
   PMICs enumerate on the bus regardless, which makes it look like SPMI is fine while
   every PMIC function (ADC, battery, RTC) is silently absent.

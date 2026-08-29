@@ -150,13 +150,20 @@ docs/
                     how to measure power without fooling yourself.
   POWER.md          Power button, shutdown and reboot: why PSCI cannot be used
                     here, and why the console lies about it.
+  CPU.md            Topology (4 efficiency + 3 performance + 1 prime), hardware
+                    DVFS and EAS - the subsystem that needed no work, and why.
   SLEEP.md          Suspend, wake and the clock: the masked sleep targets, the
                     touchscreen resume fix, why the RTC cannot be set, and why
                     idle sleep is not PowerDevil's job here.
 kernel/
   dts/              sm8150-samsung-gts6lwifi board device tree.
   config/           The kernel .config used for the running build.
-  patches/          Out-of-tree fixes (clock halt-skip, ath10k, etc.).
+  patches/          Out-of-tree fixes: PMIC PS_HOLD power-off/reboot and SMPL
+                    disarm, SPMI denied-revid tolerance, ADC battery capacity and
+                    status, dwc3 userspace role control, and the fts1ba90a resume
+                    ready-wait removal.
+  drivers/          Driver sources written for this port: the SM5705 fuel gauge and
+                    the fts1ba90a touchscreen.
 tools/              Boot-image AVB/trailer analyzers and Odin tar packers, plus the
                     runtime daemons and helpers this port needs: tabs6-powerkeyd
                     (power button + screenshot chord), tabs6-idled (idle suspend,
@@ -166,7 +173,6 @@ tools/              Boot-image AVB/trailer analyzers and Odin tar packers, plus 
 rootfs/             Files that live outside the kernel: the maliit keyboard QML, the
                     patched Plasma lock screen, systemd units and the .desktop entry.
 firmware/           How to extract SM8150/Samsung firmware from your OWN device. No blobs.
-rootfs/             Fedora + KDE Plasma userspace glue.
 ```
 
 ## Safety

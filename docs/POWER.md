@@ -53,7 +53,7 @@ A small root daemon owns the key outright (`rootfs/` — short press locks and b
 press wakes, 1.5 s opens Plasma's power menu via `org.kde.LogoutPrompt.promptAll`).
 Everything else that wants the key has to be silenced or Plasma queues a logout prompt
 *behind* the lock screen: `HandlePowerKey=ignore` and `HandlePowerKeyLongPress=ignore` in
-logind, `powerButtonAction=0` in all three PowerDevil profiles, and PowerDevil's global
+logind, `powerButtonAction=0` in all three PowerDevil profiles (**this one does nothing** — PowerDevil does not read its profile configuration on this machine at all, on 6.6.4 or 6.7.4; see [`SLEEP.md`](SLEEP.md). It is left in place as belt and braces, but the measures that actually work are logind's `HandlePowerKey=ignore` and the unbound global shortcuts), and PowerDevil's global
 `PowerOff`/`PowerDown` shortcuts unbound.
 
 ---

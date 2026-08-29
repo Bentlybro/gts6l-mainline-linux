@@ -117,9 +117,9 @@ Then check `journalctl -b | grep -iE '\.qml|is not a type|Unable to assign'`.
 ### Re-applying, and why "keep .orig copies" was not enough
 
 These files live under `/usr/lib64/maliit/keyboard2/`, so a package update overwrites
-them. Changed: `qml/KeyboardContainer.qml`, `qml/keys/CharKey.qml`, `qml/keys/NavKey.qml`,
-the new `qml/keys/ModKey.qml` and `qml/keys/SeqKey.qml`, `qml/keys/qmldir`, and
-`languages/en/Keyboard_en.qml`.
+them. Changed: `qml/KeyboardContainer.qml`, `qml/Keyboard.qml` (the `heightScale` change from
+§3), `qml/keys/CharKey.qml`, `qml/keys/NavKey.qml`, the new `qml/keys/ModKey.qml` and
+`qml/keys/SeqKey.qml`, `qml/keys/qmldir`, and `languages/en/Keyboard_en.qml`.
 
 None of them are marked `%config`, so RPM replaces them **silently** — no warning, no
 `.rpmsave`, no `.rpmnew`. The advice used to be "keep `.orig` copies", which only helps
