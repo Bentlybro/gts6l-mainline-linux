@@ -485,3 +485,27 @@ run); `rmtfs`/`qrtr` are Fedora packages. Firmware is staged under
 (`Image#17` + `gts6-wifi9.dtb`) restores a full GPU boot in one `fastboot flash`.
 Each Wi-Fi test hard-locks the SoC; the watchdog usually recovers in about
 3–4 minutes, occasionally needing a manual power-cycle.
+
+
+---
+
+## 2026-08-29: netconsole capture achieved; failure bounded
+
+The crash is now observable and the picture changed materially. With an
+instrumented ath10k (step markers through the QMI path) streaming over
+netconsole, the entire host-side exchange is proven to complete: handshake,
+MSA (fixed-perm), capability read, the BDF board-data download, and the
+calibration report all return success. The SoC then hard-locks inside the
+modem-resident WLAN PD's radio init — the modem once reported
+'SFR Init: wdog or kernel error suspected' before the fabric died. This is a
+modem-side firmware/hardware fault, not an ath10k or DT configuration bug.
+
+Also resolved the same day: the kernel-rebuild panic (stale in-tree build
+state plus stale modules across a struct-layout-changing config) and live
+netconsole capture over the USB link.
+
+Newly ruled out (captured runs): host SMMU translation (identity-DMA test),
+all three bdwlan revisions, the downstream dynamic-feature-mask message
+(mainline now sends it; accepted; no change), coredump reads (they hang the
+bus — keep coredump_mask=0), and the linux-firmware HL.2.0 wlanmdsp (SDM845
+build, wrong platform). Details in docs/DEVLOG.md.

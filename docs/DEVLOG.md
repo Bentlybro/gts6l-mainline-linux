@@ -557,3 +557,45 @@ that clears DDR on reset - that is exactly where help would move this forward. T
 well-characterized: the firmware is real, it is running, it reads the real silicon, and it dies in one
 specific step that we cannot yet see. [`WIFI.md`](WIFI.md) has everything we know, and
 [`PORT.md`](PORT.md) has the full hardware map. Patches and reference data welcome.
+
+
+## 2026-08-29 update - capture works, failure bounded to the firmware's RF init
+
+Two project-blocking walls fell today, and the Wi-Fi failure is now precisely
+bounded.
+
+The kernel-rebuild panic is solved. A pristine out-of-tree build (O= output dir
+on the build host) with the exact #17 config boots fine. The panic family had
+two ingredients: stale in-tree build state (a bad incremental build produced a
+7.7 MB larger Image with a two-symbol config delta), and stale modules -
+enabling NETCONSOLE selects NETPOLL / NET_POLL_CONTROLLER, which changes struct
+net_device layout; a new Image over old modules then data-aborts at init when
+udev loads them. Rule: any config change requires a full matching
+modules_install set; Image-only swaps are safe only with a byte-identical
+config.
+
+Netconsole works, streaming the kernel log over the USB link (tablet
+192.168.137.2 -> PC 192.168.137.1 UDP 6666, target via configfs). This replaced
+all three failed capture routes.
+
+Wi-Fi, now with real data: with an instrumented ath10k, the complete host-side
+QMI exchange succeeds - ind_register, host_cap, MSA setup with
+qcom,msa-fixed-perm, capability read (chip 0x30224, fw WLAN.HL.3.2.0.c3-00910),
+the downstream-parity dynamic feature mask message (accepted, prev=1 curr=1),
+the BDF board-data download (ret=0), and the calibration report (ret=0). Only
+then, inside the modem-resident WLAN protection domain's own radio init, the
+SoC fabric locks. Once, the modem reported its fatal reason before dying: SFR
+Init: wdog or kernel error suspected. Recovery control does not help: the lock
+is the fabric wedging on the radio access, not the crash handler.
+
+Ruled out with captured runs: host-side SMMU translation (bypass via iommus
+removal, identical lock), all three bdwlan revisions (identical), generic board
+data (identical), the dynamic feature mask (accepted, no change), coredump
+reads (enabling them makes even the soft-crash path lock - never enable), and
+the linux-firmware wlanmdsp HL.2.0-01387 (it is SDM845 firmware - wrong
+platform, its WLAN PD never starts, graceful grace-timer crash loop).
+
+Open: the Samsung HL.3.2.0.c3-00910 WLAN PD hangs driving the radio with every
+host variable matched to Samsung's own device tree. Next candidates: find a
+newer SM8150-class wlanmdsp that still pairs with Samsung board data, or
+upstream help. See the capture at 04_build/netconsole-capture.log.
