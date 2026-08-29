@@ -188,3 +188,22 @@ ever made reliable, the cleaner ordering is worth returning to.
 - **When waiting for a reboot, wait for the machine to go DOWN first, then come back.** A
   loop that only waits for "up" connects to the machine that has not left yet, reports the
   old kernel, and looks exactly like a failed deployment.
+
+---
+
+## Sleep is a separate story
+
+This document covers **shutdown and reboot** — cutting power via PMIC `PS_HOLD`
+because PSCI hangs on this firmware. Suspend/resume has its own set of problems and
+its own document: [SLEEP.md](SLEEP.md).
+
+The short version, because the failure mode is misleading: `systemctl suspend`
+reporting **"Access denied"** does not mean polkit. Fedora ships `sleep.target` and
+`suspend.target` masked, and logind reports a masked unit as an access failure
+rather than as unsupported. Check masking first.
+
+Note the asymmetry with the shutdown path documented above. Powering *off* needed
+kernel work (a reboot notifier driving `PS_HOLD`, because PSCI could not be
+trusted). Suspending needed no kernel work at all — the kernel side already worked;
+it was distribution policy and a desktop component ignoring its own configuration.
+Worth remembering before assuming the next power problem is a driver problem.

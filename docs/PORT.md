@@ -57,13 +57,15 @@ DSC (from the device's downstream panel node).
 | Fedora 44 + KDE Plasma on UFS | ✅ | Wayland session, autologin |
 | Wi-Fi (WCN3990) | ✅ | 802.11ac, 866.7 MBit/s link (VHT-MCS 9, 80 MHz, 2 streams); auto-connects at boot — [`WIFI.md`](WIFI.md) |
 | Native display / brightness / DPMS | 🚧 | needs ≥6.16 bonded-cmd-mode DPU; 6.18 tree staged |
-| Battery level reporting | ✅ | voltage + percentage via `VPH_PWR` on pm8150's ADC — [`BATTERY.md`](BATTERY.md) |
+| Battery level reporting | ✅ | now from the **SM5705 fuel gauge** (below). The earlier `VPH_PWR`-on-pm8150-ADC estimate is superseded and its `adc-battery` node is deleted — [`BATTERY.md`](BATTERY.md) |
 | Power button (lock / wake / menu) | ✅ | PMIC PON KPDPWR, not a GPIO — [`POWER.md`](POWER.md) |
 | Shutdown + reboot | ✅ | via PMIC PS_HOLD from a reboot notifier; **PSCI `SYSTEM_OFF`/`SYSTEM_RESET` both hang here** and must be overtaken. SMPL disarmed or it powers straight back up — [`POWER.md`](POWER.md) |
+| Suspend / resume / idle sleep | ✅ | s2idle; the touchscreen survives it and the power button wakes it. Fedora ships `sleep.target`/`suspend.target` **masked**, which logind reports misleadingly as "Access denied". PowerDevil ignores its own profile config (on 6.6.4 *and* 6.7.4), so idle sleep is `tools/tabs6-idled.py` — [`SLEEP.md`](SLEEP.md) |
+| Screenshots | ✅ | power + volume-down chord, and a system-tray button; both copy to the clipboard — [`DESKTOP.md`](DESKTOP.md) |
 | Fuel gauge + charge detection | ✅ | **SM5705** on I²C, not the Qualcomm PMIC — real SOC, OCV, voltage and current, so charging is detected properly. Driver written from scratch, `kernel/drivers/sm5705_fuelgauge.c` — [`BATTERY.md`](BATTERY.md) |
 | USB host (keyboard, SSD, hub) | ✅ | `dr_mode = otg` + role switch + VBUS from the SM5705 boost; `usb-role host`. Runs at USB 2.0 only — SuperSpeed unsolved, see [`USB_HOST.md`](USB_HOST.md) |
 | USB SuperSpeed | 🚧 | host, PHY and redriver all check out; orientation exhausted. Prime suspects: the cable, then `phy-qcom-qmp-combo.c` pinning orientation to NORMAL with no Type-C port manager to correct it |
-| Charge control / charging current | ⬜ | SM5705 charger reachable at `0x49`, only the OTG boost is driven so far |
+| Charge control / charging current | ✅ | 2000 mA input / 2000 mA into the battery, maintained (the registers reset when the cable moves) by `tools/tabs6-charge.sh`. AICL walks it back on a weak supply, so overshooting is safe — [`BATTERY.md`](BATTERY.md) |
 | S Pen (Wacom W9021) | ⬜ | wacom@0x56 on i2c14, irq gpio 5, pdct 53, fwe 11 |
 | Bluetooth (WCN3990 UART) | ⬜ | |
 | Audio | ⬜ | |
@@ -75,11 +77,16 @@ driver patch — the fix was a single device-tree line relocating `wlan_mem` int
 HLOS actually owns, after which stock mainline `ath10k_snoc` completes the QMI handshake
 and `wlan0` comes up.
 
-The only subsystem still in progress is the native display pipe: DPU/DSI driving the
-ANA38401 panel directly, which is what brightness control and DPMS depend on. Until that
-lands the panel stays at the bootloader's fixed backlight level and never blanks. S Pen,
-Bluetooth and audio are not started rather than blocked — nothing found so far suggests
-they need anything the other subsystems did not.
+Two subsystems are still in progress. The **native display pipe** — DPU/DSI driving the
+ANA38401 panel directly — is what *hardware* brightness and DPMS would depend on; until
+it lands the panel runs at the bootloader's fixed backlight level. In practice this
+matters less than it sounds: KWin dims in software and blanks to black on idle, and on an
+AMOLED a black frame is pixels not emitting rather than a backlight shining through, so
+the screen does effectively blank and the power cost is small. The other is **USB
+SuperSpeed**, which still negotiates only high speed.
+
+S Pen, Bluetooth and audio are not started rather than blocked — nothing found so far
+suggests they need anything the other subsystems did not.
 
 ## Lessons carried from the S20 (`z3s`) project (all held true here)
 

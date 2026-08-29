@@ -55,12 +55,15 @@ SoC brought up.
 | GPU acceleration | ✅ | Adreno 640 render‑only via `msm`/freedreno, Mesa kmsro pairs it with simpledrm; Samsung‑signed zap shader |
 | USB networking + SSH | ✅ | RNDIS+ACM configfs gadget → root SSH over USB (the dev lifeline) |
 | Wi‑Fi (WCN3990) | ✅ | 802.11ac, 866.7 MBit/s link rate (VHT‑MCS 9, 80 MHz, 2 streams), auto‑connects at boot; fixed by relocating `wlan_mem` into HLOS‑owned DDR — see [`docs/WIFI.md`](docs/WIFI.md) |
-| Native display / brightness / DPMS | 🚧 | dual‑DSI ANA38401 panel; needs the ≥6.16 bonded‑cmd‑mode DPU fixes (6.18 tree staged) |
+| Native display pipe (DPU/DSI) | 🚧 | dual‑DSI ANA38401 panel; needs the ≥6.16 bonded‑cmd‑mode DPU fixes (6.18 tree staged). Only *hardware* brightness and DPMS depend on it — software dimming and idle blanking both work today |
 | Brightness | ✅ | software dimming via KWin (Plasma 6), since the panel has no hardware backlight interface. Measured cost of the whole display on a dark desktop: ~0.1 W |
 | Power button, shutdown, reboot | ✅ | power key is the PMIC PON block, not a GPIO; power‑off and reboot go through PMIC `PS_HOLD` because **PSCI `SYSTEM_OFF`/`SYSTEM_RESET` both hang on this firmware** — see [`docs/POWER.md`](docs/POWER.md) |
 | Fuel gauge + charge detection | ✅ | the battery is not on the Qualcomm PMIC at all — Samsung fits an **SM5705** charger + fuel gauge + MUIC on I²C. Driver written from scratch: real state of charge, voltage, OCV and current, so charging is detected properly |
 | USB host — keyboard, SSD, hub | ✅ | dual‑role port with a runtime `usb-role` switch, VBUS sourced from the SM5705 boost. A 4 TB bus‑powered SSD runs off it — at USB 2.0; SuperSpeed is still unsolved, see [`docs/USB_HOST.md`](docs/USB_HOST.md) |
 | Suspend / resume / idle sleep | ✅ | s2idle works, touchscreen survives it, power button wakes. Fedora ships `sleep.target`/`suspend.target` **masked**, which makes logind report "Access denied"; and PowerDevil ignores its profile config entirely, so idle sleep is handled by `tools/tabs6-idled.py` — see [`docs/SLEEP.md`](docs/SLEEP.md) |
+| Charge control | ✅ | 2000 mA in / 2000 mA to the battery, maintained because the registers reset when the cable moves. Applies at boot — it used to start two minutes late, so the tablet charged at 500 mA through the busiest part of every boot — see [`docs/BATTERY.md`](docs/BATTERY.md) |
+| Screenshots | ✅ | power + volume‑down chord, and a button in the system tray; both copy to the clipboard and save to `~/Pictures/Screenshots` — see [`docs/DESKTOP.md`](docs/DESKTOP.md) |
+| Surviving distro upgrades | ✅ | RPM silently reverts the lock‑screen and keyboard customisations (package‑owned, not `%config`, no `.rpmsave`). `tabs6-desktop-patches.service` re‑applies them every boot |
 | S Pen, Bluetooth, audio | ⬜ | not started |
 
 Read [`docs/PORT.md`](docs/PORT.md) for the full hardware map and
@@ -138,7 +141,9 @@ docs/
   USB_NETWORKING.md The RNDIS+ACM lifeline (SSH + serial over USB).
   WIFI.md           WCN3990 bring-up: modem boot, ath10k QMI, and the wlan_mem fix.
   DESKTOP.md        Making it usable: on-screen keyboard with real modifier keys,
-                    zram, touch text selection, Electron/Wayland, routing.
+                    zram, touch text selection, Electron/Wayland, routing, the
+                    hardware buttons and screenshot chord, a tray screenshot
+                    button, and re-applying the patches RPM upgrades revert.
   USB_HOST.md       Host mode, VBUS from the SM5705, and why SuperSpeed
                     does not work yet.
   BATTERY.md        The SM5705 fuel gauge, why pm8150b is a closed door, and
@@ -152,7 +157,14 @@ kernel/
   dts/              sm8150-samsung-gts6lwifi board device tree.
   config/           The kernel .config used for the running build.
   patches/          Out-of-tree fixes (clock halt-skip, ath10k, etc.).
-tools/              Boot-image AVB/trailer analyzers and Odin tar packers.
+tools/              Boot-image AVB/trailer analyzers and Odin tar packers, plus the
+                    runtime daemons and helpers this port needs: tabs6-powerkeyd
+                    (power button + screenshot chord), tabs6-idled (idle suspend,
+                    because PowerDevil will not), tabs6-charge (charge current),
+                    tabs6-screenshot / tabs6-screenshot-tray (a tray button),
+                    tabs6-desktop-patches (re-apply what upgrades revert), usb-role.
+rootfs/             Files that live outside the kernel: the maliit keyboard QML, the
+                    patched Plasma lock screen, systemd units and the .desktop entry.
 firmware/           How to extract SM8150/Samsung firmware from your OWN device. No blobs.
 rootfs/             Fedora + KDE Plasma userspace glue.
 ```

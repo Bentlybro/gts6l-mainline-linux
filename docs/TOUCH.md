@@ -223,3 +223,38 @@ differently-mounted digitizer, expect to redo this step.
 | I2C `-EPROBE_DEFER` loop, then `Failed to setup GPI DMA mode` / `Failed to get tx DMA ch` | SE17 is GSI-only (fw sets `GENI_IF_DISABLE`); FIFO impossible | `CONFIG_QCOM_GPI_DMA=y` **and** `&gpi_dma2 { status = "okay"; }` — §3 |
 | Touch (and panel) lose power at late init | `regulator_late_cleanup` disables unclaimed rails | `regulator-always-on` on `l14a` (vdd) and `l17a` (avdd) — §4 |
 | Touch tracks but axes wrong/mirrored | Digitizer mounting orientation | `touchscreen-swapped-x-y` + `touchscreen-inverted-x` — §6 |
+
+---
+
+## Suspend and resume
+
+The controller survives suspend, but the resume path was quietly wrong for a while
+and is worth understanding if you touch it.
+
+`probe()` and `resume()` had drifted apart:
+
+    probe:  power_on -> system_reset -> read_ids -> configure
+    resume: power_on -> wait_for_ready -> system_reset -> configure
+                        ^^^^^^^^^^^^^^ cannot succeed
+
+The controller does not post a ready event because its rails came back — it posts
+one **in response to the reset**. So the bare `wait_for_ready()` waited for
+something that was never coming, burned `FTS_RETRY_COUNT * 15` iterations of
+`msleep(20)` (about three seconds of wake time), logged
+
+    fts1ba90a 4-0049: resume: ready wait failed: -110
+
+and then discarded the result and carried on anyway. `system_reset()` already does
+its own ready wait. Deleting the bare wait makes resume match probe step for step.
+See `kernel/patches/fts1ba90a-resume-drop-redundant-ready-wait.patch`.
+
+A healthy cycle now logs only the same benign line probe prints:
+
+    [61.11] PM: suspend entry (s2idle)
+    [67.78] fts1ba90a 4-0049: no echo for cmd a0 (ignored): 00 00 ...
+    [68.48] PM: suspend exit
+
+**The touchscreen cannot wake the device.** It has no wakeup entry at all
+(`/sys/bus/i2c/devices/4-0049/power/wakeup` does not exist) and
+`fts1ba90a_suspend()` calls `fts1ba90a_power_off()`, dropping its regulators. Wake
+with the power button or volume down. See [SLEEP.md](SLEEP.md).

@@ -313,6 +313,28 @@ Three things about it matter:
 - **Never touches the chip in `USB_OTG` mode.** There the SM5705 is a *supply*, not a charger,
   and writing charge limits at it is meaningless. See [`USB_HOST.md`](USB_HOST.md).
 
+**And it has to actually start at boot**, which for a long time it did not. The unit
+carried `After=multi-user.target` *and* `WantedBy=multi-user.target` — ordered after
+the very target that wants it — so its start job sat queued and the service came up
+about **two minutes into every boot**:
+
+    Active: inactive (dead)
+       Job: 215
+
+Which means the tablet spent the busiest part of every boot charging at the default
+**500 mA** input rather than 2000 mA. It is an easy thing to miss because nothing
+fails: the service does start, just late, and by the time you look it is running.
+
+Dropping the `After=` line fixed it; charge control now applies at boot:
+
+    23:06:25 Started tabs6-charge.service
+    23:06:25 target 2000mA input (offset 76), 2000mA charge (offset 38)
+
+Worth knowing generally: `systemctl enable --now` proves nothing about whether a
+unit starts at boot, because it starts the unit directly and bypasses ordering
+entirely. Only a reboot counts — and `journalctl -b | grep "ordering cycle"` is
+worth a look every time a unit is added.
+
 Asking for 2000 mA from a source that can't deliver it is safe: **AICL** walks the input
 current back until the supply voltage holds up, so a weak charger simply ends up giving what
 it can.
