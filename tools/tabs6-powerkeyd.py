@@ -48,6 +48,19 @@ DESKTOP_UID = os.environ.get("POWERKEY_UID", "1000")
 # cannot hit both at the same instant, and Android is similarly forgiving.
 COMBO_WINDOW_S = float(os.environ.get("POWERKEY_COMBO_WINDOW", "0.6"))
 
+# After a wake, ignore the next short press for this long.
+#
+# Resume on this device costs about 6.5 seconds of fixed suspend/resume overhead
+# before userspace even unfreezes, measured by varying the rtcwake alarm and
+# watching the gap not move. The screen therefore cannot light immediately, and
+# the entirely reasonable human response is to press the button again. That
+# second press arrives once the screen IS on, so is_asleep() is correctly false
+# and the daemon does the other thing it is supposed to do: lock and blank.
+# The daemon is behaving exactly as designed and the result is still wrong.
+#
+# A long press is deliberate enough to mean it, so the power menu is not guarded.
+WAKE_GUARD_S = float(os.environ.get("POWERKEY_WAKE_GUARD", "2.5"))
+
 SHOT_DIR = os.environ.get("POWERKEY_SHOT_DIR",
                           f"/home/{DESKTOP_USER}/Pictures/Screenshots")
 
@@ -107,6 +120,9 @@ DPMS_ATTR = find_dpms_attr()
 # press would look like a fresh lock request. That produced the bug where a
 # wake press lit the screen for a moment and then blanked it again.
 soft_sleep = False
+
+# BOOTTIME until which a short press is swallowed; see WAKE_GUARD_S.
+wake_guard_until = 0.0
 
 
 def screen_is_on():
@@ -268,7 +284,7 @@ def do_screenshot(was_asleep):
 
 
 def do_short_press(was_asleep):
-    global soft_sleep
+    global soft_sleep, wake_guard_until
 
     if was_asleep:
         log("short press: wake")
@@ -276,6 +292,7 @@ def do_short_press(was_asleep):
         # KWin has usually lit the panel already, on the key press itself.
         # Asking again is harmless and covers the case where it has not.
         set_dpms("on")
+        wake_guard_until = clock() + WAKE_GUARD_S
         return
 
     log("short press: lock + screen off")
@@ -410,7 +427,13 @@ def main():
 
                     if code == KEY_POWER and was_down and not combo_fired \
                             and not long_fired:
-                        do_short_press(asleep_at_press)
+                        if now < wake_guard_until:
+                            log("short press ignored: %.1fs left of the "
+                                "wake guard (resume is slow, this would "
+                                "have locked the screen you just woke)"
+                                % (wake_guard_until - now))
+                        else:
+                            do_short_press(asleep_at_press)
 
                     # Only clear the chord once BOTH keys are up, or releasing
                     # the first one would let the second act on its own.

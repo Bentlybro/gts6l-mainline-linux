@@ -33,6 +33,24 @@
 #define FTS_I2C_RETRY_CNT		3
 #define FTS_RETRY_COUNT			10
 
+/*
+ * How long to wait for a command's echo event.
+ *
+ * The old bound was FTS_RETRY_COUNT * 25 iterations of msleep(20), i.e. a flat
+ * five seconds for every command. That is only defensible for force
+ * calibration, which genuinely takes seconds. For the ordinary commands the
+ * echo either arrives promptly or, on this firmware (fw 0x0037), never arrives
+ * at all - and the scan-enable command 0xA0 is in the second category, so the
+ * driver sat out the full five seconds on every configure().
+ *
+ * That cost five seconds at probe AND five seconds on every single resume,
+ * which is most of the six second wake latency this device had: press the power
+ * button, wait six seconds, press it again because nothing happened.
+ */
+#define FTS_ECHO_POLL_MS		20
+#define FTS_ECHO_TIMEOUT_MS		300
+#define FTS_ECHO_TIMEOUT_CAL_MS		5000
+
 /* command opcodes (downstream fts_ts.h) */
 #define FTS_CMD_SENSE_OFF		0x11
 #define FTS_CMD_FORCE_CALIBRATION	0x13
@@ -193,7 +211,7 @@ static int fts1ba90a_wait_for_ready(struct fts1ba90a *ts)
 				"timed out waiting for ready: %*ph\n", 8, data);
 			return -ETIMEDOUT;
 		}
-		msleep(20);
+		msleep(FTS_ECHO_POLL_MS);
 	}
 }
 
@@ -203,7 +221,8 @@ static int fts1ba90a_wait_for_ready(struct fts1ba90a *ts)
  * scan-mode change) complete asynchronously and signal via this echo.
  */
 static int fts1ba90a_write_wait_echo(struct fts1ba90a *ts, const u8 *cmd,
-				     int cmd_len, int delay_ms)
+				     int cmd_len, int delay_ms,
+				     int echo_timeout_ms)
 {
 	u8 read_cmd = FTS_READ_ONE_EVENT;
 	u8 data[FTS_EVENT_SIZE];
@@ -227,7 +246,7 @@ static int fts1ba90a_write_wait_echo(struct fts1ba90a *ts, const u8 *cmd,
 		    !memcmp(&data[2], cmd, cmp))
 			return 0;
 
-		if (retry++ > FTS_RETRY_COUNT * 25) {
+		if (retry++ > echo_timeout_ms / FTS_ECHO_POLL_MS) {
 			/*
 			 * Tab S6-era firmware (fw 0x0037) does not emit the
 			 * echo event this check expects; the chip ID read has
@@ -239,7 +258,7 @@ static int fts1ba90a_write_wait_echo(struct fts1ba90a *ts, const u8 *cmd,
 				 cmd[0], 8, data);
 			return 0;
 		}
-		msleep(20);
+		msleep(FTS_ECHO_POLL_MS);
 	}
 }
 
@@ -326,16 +345,19 @@ static int fts1ba90a_configure(struct fts1ba90a *ts, bool calibrate)
 	msleep(10);
 
 	if (calibrate) {
-		ret = fts1ba90a_write_wait_echo(ts, cal_cmd, sizeof(cal_cmd), 0);
+		ret = fts1ba90a_write_wait_echo(ts, cal_cmd, sizeof(cal_cmd), 0,
+						FTS_ECHO_TIMEOUT_CAL_MS);
 		if (ret < 0)
 			dev_warn(&ts->client->dev, "calibration not confirmed\n");
 	}
 
-	ret = fts1ba90a_write_wait_echo(ts, clear_cmd, sizeof(clear_cmd), 0);
+	ret = fts1ba90a_write_wait_echo(ts, clear_cmd, sizeof(clear_cmd), 0,
+					FTS_ECHO_TIMEOUT_MS);
 	if (ret < 0)
 		return ret;
 
-	return fts1ba90a_write_wait_echo(ts, scan_cmd, sizeof(scan_cmd), 0);
+	return fts1ba90a_write_wait_echo(ts, scan_cmd, sizeof(scan_cmd), 0,
+					 FTS_ECHO_TIMEOUT_MS);
 }
 
 static int fts1ba90a_power_on(struct fts1ba90a *ts)

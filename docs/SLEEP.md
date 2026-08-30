@@ -93,9 +93,15 @@ See `kernel/patches/fts1ba90a-resume-drop-redundant-ready-wait.patch`.
 
 A clean cycle now looks like this, with only the same benign line probe prints:
 
-    [61.11] PM: suspend entry (s2idle)
-    [67.78] fts1ba90a 4-0049: no echo for cmd a0 (ignored): 00 00 ...
-    [68.48] PM: suspend exit
+    [51.24] PM: suspend entry (s2idle)
+    [51.98] fts1ba90a 4-0049: no echo for cmd a0 (ignored): 00 00 ...
+    [52.67] PM: suspend exit
+
+**Resume is 1.5 s.** It used to be 6.5 to 7.0 s, and almost all of that was this
+same driver: `configure()` waited a flat five seconds for an echo on command
+`0xA0` that this firmware never sends. Fixed by making the echo timeout per
+command. That is the single biggest thing that made the tablet feel usable after
+a sleep, and the whole story is in [TOUCH.md](TOUCH.md).
 
 **Lesson:** an error in a log is not automatically the failure you are chasing.
 This one cost three seconds a wake and nothing else, while looking like a dead

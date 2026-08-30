@@ -258,3 +258,81 @@ A healthy cycle now logs only the same benign line probe prints:
 (`/sys/bus/i2c/devices/4-0049/power/wakeup` does not exist) and
 `fts1ba90a_suspend()` calls `fts1ba90a_power_off()`, dropping its regulators. Wake
 with the power button or volume down. See [SLEEP.md](SLEEP.md).
+
+---
+
+## The echo timeout that cost six seconds at every probe and every resume
+
+Worth reading before touching `fts1ba90a_write_wait_echo()`.
+
+Some commands complete asynchronously and signal by posting an echo event, so the
+driver writes the command and then polls for it. The bound used to be flat:
+
+```c
+if (retry++ > FTS_RETRY_COUNT * 25)   /* 10 * 25 = 250 */
+        ...
+msleep(20);                            /* 250 * 20 ms = 5.0 seconds */
+```
+
+`fts1ba90a_configure()` waits for an echo on two commands, `clear` (0x62) and
+`scan` (0xA0). On this firmware (fw `0x0037`) `0x62` echoes promptly and returns,
+and **`0xA0` never echoes at all**. The driver already knows this and treats a
+missing echo as informational, logging:
+
+    fts1ba90a 4-0049: no echo for cmd a0 (ignored): 00 00 00 00 00 00 00 00
+
+But it waited the full five seconds before deciding that. Every probe, and every
+single resume, because `resume()` calls `configure()`.
+
+The symptom did not look like a touchscreen problem. It looked like slow wake:
+press the power button, wait six seconds, press again because nothing happened,
+and the second press locks the screen that just came up. What identified it was
+noticing the same signature in the **boot** log, where suspend is not involved:
+
+    [1.271] fts1ba90a 4-0049: ST id 3936 fw 0x0037 ...
+    [8.126] fts1ba90a 4-0049: no echo for cmd a0 (ignored)
+
+Six and three quarter seconds between reading the chip ID and finishing
+configure, on a path with nothing to do with resume.
+
+The five second bound is genuinely correct for `FTS_CMD_FORCE_CALIBRATION`, which
+takes seconds, but that only runs at probe (`configure(ts, true)`). So the
+timeout is a per-call argument now:
+
+| Command | Timeout |
+|---|---|
+| `clear` 0x62, `scan` 0xA0 | `FTS_ECHO_TIMEOUT_MS` = 300 ms |
+| force calibration 0x13 | `FTS_ECHO_TIMEOUT_CAL_MS` = 5000 ms |
+
+Measured effect:
+
+| | Before | After |
+|---|---|---|
+| resume, suspend entry to exit | 6.5 to 7.0 s | **1.50 s** |
+| configure at boot | 6.74 s | **0.54 s** |
+
+See `kernel/patches/fts1ba90a-per-command-echo-timeout.patch`.
+
+### How to see inside a suspend at all
+
+The reason this hid for so long is that everything between `Suspending
+console(s)` and the touchscreen's resume line happens with the console down, so
+nothing can log in that window. `console_suspend` is a **runtime** parameter, not
+only a kernel command line option:
+
+```bash
+echo N > /sys/module/printk/parameters/console_suspend
+```
+
+No reboot required, and the silent gap becomes an ordinary timestamped log.
+
+Two measurement traps met on the way, both worth avoiding:
+
+- The dmesg clock is **frozen across s2idle** on this platform. A 20 second sleep
+  shows as roughly 6.5 seconds of kernel time. That is actually useful: vary the
+  wake alarm, and if the measured gap does not move, what you are looking at is
+  fixed suspend and resume overhead rather than sleep.
+- `rtcwake -m no -s N` followed by a separate suspend command can strand the
+  device. If the suspend takes longer than N to land, the alarm fires first and
+  is wasted, and the machine then sleeps with no wake source at all. Use
+  `rtcwake -m freeze -s N`, which arms and suspends atomically.
