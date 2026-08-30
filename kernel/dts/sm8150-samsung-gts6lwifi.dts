@@ -580,6 +580,52 @@
 	vdd-3.3-ch0-supply = <&vreg_l11c_3p3>;
 };
 
+/*
+ * ADSP enabled for audio. Nothing about audio can happen until this runs.
+ *
+ * Memory checked before flipping this on: adsp_mem is 0x8be00000 + 0x1a00000,
+ * so it ends exactly where our extended mpss_mem begins at 0x8d800000. Adjacent,
+ * not overlapping. venus/slpi were already relocated above the modem.
+ *
+ * Firmware is this device's own adsp.mdt plus segments from apnhlos, not the
+ * Surface Duo path sm8150.dtsi defaults to.
+ *
+ * cdsp stays off: it is the compute DSP, nothing here needs it, and it would
+ * only cost memory and boot time.
+ */
+/*
+ * ADSP: left DISABLED, and the reason is worth keeping.
+ *
+ * Audio needs this running. It does not run. With this device's own adsp.mdt
+ * (build ADSP.HT.5.0.c1-00046-SM8150-1, lifted from apnhlos) the boot gets
+ * remarkably far and then stops in one specific place:
+ *
+ *   remoteproc remoteproc1: Booting fw image qcom/sm8150/gts6l/adsp.mdt
+ *   qcom_q6v5_pas 17300000.remoteproc: error -22 setting up firmware
+ *
+ * That message is from mdt_loader.c and it is NOT the image being rejected.
+ * qcom_scm_pas_init_image() runs FIRST and succeeds, so TrustZone has parsed
+ * and authenticated the firmware. The failure is the very next call:
+ *
+ *   qcom_scm_pas_mem_setup(pas_id, mem_phys, max_addr - min_addr)  ->  -EINVAL
+ *
+ * i.e. TZ accepts the image and then refuses to let us place it.
+ *
+ * Tried and ruled out:
+ *   - the canonical adsp_mem (0x8be00000, 26 MB): identical failure
+ *   - a correctly sized 39 MB region at 0x9f800000, inside a 520 MB hole with
+ *     nothing reserved in it and clear of every firmware carveout: identical
+ *     failure. So it is not our address choice and not the size.
+ *
+ * Note the image genuinely wants 39 MB of loadable span (0x8be00000..0x8e500000
+ * with hash segments filtered exactly as mdt_phdr_valid does), while both
+ * mainline AND downstream declare 26 MB, and growing it in place would collide
+ * with mpss_mem at 0x8d800000, whose address is fixed by the signed modem image.
+ * That contradiction is unexplained and is probably the thread to pull next.
+ *
+ * This is the same family as the pm8150b SPMI denial and the wlan MSA assign:
+ * Samsung TZ owns something and declines. See BATTERY.md and WIFI.md.
+ */
 &remoteproc_adsp { status = "disabled"; };
 &remoteproc_cdsp { status = "disabled"; };
 /* mpss ENABLED for wifi: WCN3990 wlan fw runs on the modem Q6 */

@@ -65,7 +65,8 @@ SoC brought up.
 | Screenshots | working | power + volume-down chord, and a button in the system tray; both copy to the clipboard and save to `~/Pictures/Screenshots` - see [`docs/DESKTOP.md`](docs/DESKTOP.md) |
 | Surviving distro upgrades | working | RPM silently reverts the lock-screen and keyboard customisations (package-owned, not `%config`, no `.rpmsave`). `tabs6-desktop-patches.service` re-applies them every boot |
 | Bluetooth (WCN3990 UART) | working | `hci_qca` on a UART mainline never declared (0xc8c000 is only i2c13/spi13 upstream). Firmware and the BD address both come off the device itself - see [`docs/BLUETOOTH.md`](docs/BLUETOOTH.md) |
-| S Pen, audio | not done | see [`docs/PORT.md`](docs/PORT.md) |
+| Audio | blocked | four Cirrus CS35L41 amps and a CS48L33, not the Qualcomm codec. Blocked at the first step: TrustZone authenticates the ADSP image and then refuses `pas_mem_setup` - see [`docs/AUDIO.md`](docs/AUDIO.md) |
+| S Pen | not done | see [`docs/PORT.md`](docs/PORT.md) |
 
 Read [`docs/PORT.md`](docs/PORT.md) for the full hardware map and
 [`docs/DEVLOG.md`](docs/DEVLOG.md) for the chronological story (what was tried, what
@@ -153,6 +154,8 @@ docs/
                     here, and why the console lies about it.
   CPU.md            Topology (4 efficiency + 3 performance + 1 prime), hardware
                     DVFS and EAS - the subsystem that needed no work, and why.
+  AUDIO.md          Why audio does not work yet: the real (Cirrus) hardware, and
+                    the exact TrustZone call that refuses the ADSP.
   BLUETOOTH.md      WCN3990 over UART: the undeclared UART personality, the
                     alias the driver needs, the firmware name it derives, and the
                     controller that has no address of its own.
