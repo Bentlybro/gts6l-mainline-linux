@@ -1,14 +1,16 @@
 --- a/sound/soc/qcom/sm8250.c
 +++ b/sound/soc/qcom/sm8250.c
-@@ -7,6 +7,7 @@
+@@ -7,6 +7,9 @@
  #include <sound/soc.h>
  #include <sound/soc-dapm.h>
  #include <sound/pcm.h>
 +#include <sound/pcm_params.h>
++#include <linux/regulator/consumer.h>
++#include <sound/cs48l32.h>
  #include <linux/soundwire/sdw.h>
  #include <sound/jack.h>
  #include <linux/input-event-codes.h>
-@@ -17,6 +18,38 @@
+@@ -17,6 +20,38 @@
  #define DRIVER_NAME		"sm8250"
  #define MI2S_BCLK_RATE		1536000
  
@@ -47,7 +49,7 @@
  struct sm8250_snd_data {
  	bool stream_prepared[AFE_PORT_MAX];
  	struct snd_soc_card *card;
-@@ -39,10 +72,28 @@
+@@ -39,10 +74,28 @@
  					SNDRV_PCM_HW_PARAM_RATE);
  	struct snd_interval *channels = hw_param_interval(params,
  					SNDRV_PCM_HW_PARAM_CHANNELS);
@@ -76,7 +78,7 @@
  	return 0;
  }
  
-@@ -71,6 +122,22 @@
+@@ -71,6 +124,66 @@
  		snd_soc_dai_set_fmt(cpu_dai, fmt);
  		snd_soc_dai_set_fmt(codec_dai, codec_dai_fmt);
  		break;
@@ -96,10 +98,54 @@
 +		/* clocks, slot geometry and channel maps: see hw_params */
 +		break;
 +	}
++	case QUINARY_MI2S_RX:
++	case QUINARY_MI2S_TX: {
++		struct snd_soc_dai *cdai;
++		int j, ret;
++
++		/*
++		 * The microphone path. The CS48L33 sits on this port, not on the
++		 * Secondary TDM bus the speaker amps use.
++		 */
++		fmt |= SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_I2S;
++		codec_dai_fmt |= SND_SOC_DAIFMT_NB_NF | SND_SOC_DAIFMT_I2S;
++
++		snd_soc_dai_set_sysclk(cpu_dai, Q6AFE_LPASS_CLK_ID_QUI_MI2S_IBIT,
++				       MI2S_BCLK_RATE, SNDRV_PCM_STREAM_CAPTURE);
++		snd_soc_dai_set_fmt(cpu_dai, fmt);
++
++		for_each_rtd_codec_dais(rtd, j, cdai) {
++			snd_soc_dai_set_fmt(cdai, codec_dai_fmt);
++
++			/*
++			 * This codec needs its own clock tree started, which the
++			 * speaker amps never did: FLL1 locked to the ASP bit
++			 * clock and running at 49.152 MHz, then SYSCLK_1 taken
++			 * from FLL1 at 98.304 MHz. Both numbers are Samsung's,
++			 * out of cirrus,fll1-refclk-bclk and cirrus,sysclk in
++			 * their own card node.
++			 */
++			ret = snd_soc_component_set_pll(cdai->component,
++							CS48L32_FLL1_REFCLK,
++							CS48L32_FLL_SRC_ASP1_BCLK,
++							MI2S_BCLK_RATE, 49152000);
++			if (ret && ret != -ENOTSUPP)
++				return ret;
++
++			ret = snd_soc_component_set_sysclk(cdai->component,
++							   CS48L32_CLK_SYSCLK_1,
++							   CS48L32_CLK_SRC_FLL1,
++							   98304000,
++							   SND_SOC_CLOCK_IN);
++			if (ret && ret != -ENOTSUPP)
++				return ret;
++		}
++		break;
++	}
  	default:
  		break;
  	}
-@@ -89,12 +156,124 @@
+@@ -89,12 +202,124 @@
  	sdw_release_stream(sruntime);
  }
  
@@ -224,7 +270,7 @@
  
  	return qcom_snd_sdw_hw_params(substream, params, &pdata->sruntime[cpu_dai->id]);
  }
-@@ -173,6 +352,7 @@
+@@ -173,6 +398,7 @@
  }
  
  static const struct of_device_id snd_sm8250_dt_match[] = {

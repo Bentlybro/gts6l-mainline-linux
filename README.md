@@ -68,6 +68,7 @@ SoC brought up.
 | Audio | works | speakers, via the ADSP + APR + Secondary TDM to four Cirrus CS35L41 amps, with an ALSA UCM profile so the desktop gets a real sink. Headphone jack needs a CS48L33 driver that does not exist upstream - see [`docs/AUDIO.md`](docs/AUDIO.md) |
 | Hardware buttons | working | power and volume down are PMIC PON inputs; volume up is **pm8150L `gpio12`**, not the Surface Duo's `pm8150_gpios 6` that was inherited and emitted nothing at all - see [`docs/DESKTOP.md`](docs/DESKTOP.md) |
 | Boot time | ~38 s cold power-on to desktop | 23.9 s of that is controllable (was 56.6 s); the rest is Samsung's bootloader, which varies 8-23 s boot to boot. See the boot section of [`docs/DEVLOG.md`](docs/DEVLOG.md) |
+| Microphones | works (ALSA) | four-input Cirrus CS48L33 on SPI over Quinary MI2S. Records fine via `arecord`; it is **not** a PipeWire source yet, because a UCM capture device breaks the card - see [`docs/AUDIO.md`](docs/AUDIO.md) |
 | S Pen | not done | see [`docs/PORT.md`](docs/PORT.md) |
 
 Read [`docs/PORT.md`](docs/PORT.md) for the full hardware map and

@@ -97,7 +97,25 @@
 		model = "SM-T860";
 
 		pinctrl-names = "default";
-		pinctrl-0 = <&sec_tdm_active>;
+		pinctrl-0 = <&sec_tdm_active>, <&quin_mi2s_active>;
+
+		/*
+		 * The analogue mics need bias, and DAPM will not power a supply
+		 * nothing depends on. Out of the box all four MICBIAS widgets sit at
+		 * "Off, in 0 out 0" - unreferenced - so the inputs are unbiased and
+		 * capture records a flat noise floor that never responds to sound.
+		 * Naming the dependency here is what turns them on.
+		 *
+		 * IN1L on MICBIAS1A and IN1R on MICBIAS1B follows Samsung enabling
+		 * exactly 1A and 1B (with active discharge) and not 1C. Which mic is
+		 * on which bias is an assumption; if only one channel comes alive,
+		 * swap them.
+		 */
+		audio-routing =
+			"IN1LN_1", "MICBIAS1A",
+			"IN1LP_1", "MICBIAS1A",
+			"IN1RN_1", "MICBIAS1B",
+			"IN1RP_1", "MICBIAS1B";
 
 		mm1-dai-link {
 			link-name = "MultiMedia1";
@@ -112,6 +130,23 @@
 
 			cpu {
 				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA2>;
+			};
+		};
+
+		mic-dai-link {
+			link-name = "Quinary MI2S Capture";
+
+			cpu {
+				sound-dai = <&q6afedai QUINARY_MI2S_TX>;
+			};
+
+			platform {
+				sound-dai = <&q6routing>;
+			};
+
+			codec {
+				/* index 0 is cs48l32-asp1 */
+				sound-dai = <&cs48l33 0>;
 			};
 		};
 
@@ -762,6 +797,28 @@
 	 */
 	gpio-reserved-ranges = <0 4>;
 
+	/*
+	 * Quinary MI2S carries the microphone path: the codec's ASP1 lands here,
+	 * not on the Secondary TDM bus the speakers use. Samsung's own node calls
+	 * these quin_mi2s but the pinmux function is spkr_i2s. Capture arrives on
+	 * SD1 (tx-lines = 0x2 downstream); SD0 is the unused playback direction.
+	 */
+	quin_mi2s_active: quin-mi2s-active-state {
+		sck-ws-pins {
+			pins = "gpio149", "gpio151";
+			function = "spkr_i2s";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		sd1-pins {
+			pins = "gpio152";
+			function = "spkr_i2s";
+			drive-strength = <8>;
+			bias-disable;
+		};
+	};
+
 	cs48l33_irq_default: cs48l33-irq-state {
 		pins = "gpio12";
 		function = "gpio";
@@ -1009,6 +1066,12 @@
 };
 
 &q6afedai {
+	/* microphones, via the CS48L33's ASP1 */
+	dai@128 {
+		reg = <QUINARY_MI2S_TX>;
+		qcom,sd-lines = <1>;
+	};
+
 	dai@40 {
 		reg = <SECONDARY_TDM_RX_0>;
 		qcom,tdm-sync-mode = <0>;
@@ -1264,7 +1327,7 @@
 &spi3 {
 	status = "okay";
 
-	audio-codec@0 {
+	cs48l33: audio-codec@0 {
 		compatible = "cirrus,cs48l33";
 		reg = <0>;
 		spi-max-frequency = <25000000>;

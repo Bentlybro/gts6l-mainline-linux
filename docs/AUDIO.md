@@ -11,8 +11,9 @@ part: every one of them looked like a dead end and none of them was.
 | APR + q6core / q6afe / q6asm / q6adm | **works** |
 | Secondary TDM back end, CS35L41 amps, sound card | **works** |
 | Desktop sink (PipeWire via ALSA UCM) | **works** |
-| Mic codec (CS48L33) probes | **works** (capture path not wired yet, section 6) |
-| headphone jack (CS48L33) | needs the capture/playback path below |
+| Microphones (capture via ALSA) | **works** |
+| Microphone as a desktop source | **not working**, see section 6b |
+| headphone jack (CS48L33) | not started |
 
 ---
 
@@ -381,7 +382,78 @@ drain, so without the pull up it floats, a level-low interrupt reads as
 permanently asserted, and after 100000 unhandled interrupts the kernel prints
 `irq 179: nobody cared` and disables the line.
 
-### What is left before a microphone actually records
+### The microphone records
+
+`arecord -D hw:0,0` gives peak 9001 and RMS 942 in a quiet room against a noise
+floor of about 10, and the per-half-second RMS tracks speech starting and
+stopping.
+
+Three things were needed on top of the driver.
+
+**The path.** ASP1 goes to **Quinary MI2S**: gpio149 sck, gpio151 ws, gpio152
+sd1, pinmux function `spkr_i2s`, capture on SD1 because downstream sets
+`tx-lines = 0x2`. That means a `QUINARY_MI2S_TX` back end with
+`qcom,sd-lines = <1>`, a capture dai-link to `cs48l32-asp1`, and machine driver
+support the speakers never needed: the codec's own clock tree, with FLL1 locked
+to the ASP bit clock at 49.152 MHz and SYSCLK_1 taken from FLL1 at 98.304 MHz.
+Both decode straight out of Samsung's `cirrus,fll1-refclk-bclk` and
+`cirrus,sysclk` against the driver's constants.
+
+`include/sound/cs48l32.h` is a public header meant for machine drivers, and it
+declares an array of `struct regulator_bulk_data` without including the header
+that defines it, so it only compiles inside the codec. Include
+`<linux/regulator/consumer.h>` first.
+
+**Routing and bias.** The first capture ran clean and produced **digital
+silence**, all 288000 samples exactly zero, which is the signature of a link that
+works and carries nothing. Two causes:
+
+* the codec powers up with its analogue inputs **disconnected from the ASP
+  transmitter**, so `ASP1TX1 Input 1` and `ASP1TX2 Input 1` must be pointed at
+  IN1L and IN1R;
+* the mics had **no bias**. All four MICBIAS widgets sat at `Off, in 0 out 0`,
+  and DAPM will not power a supply nothing depends on. The card names the
+  dependency in `audio-routing`, tying IN1LN_1/IN1LP_1 to MICBIAS1A and
+  IN1RN_1/IN1RP_1 to MICBIAS1B, which is the split Samsung implies by enabling
+  1A and 1B and not 1C.
+
+A runtime sweep settled the input configuration rather than guessing:
+
+| config | result |
+| --- | --- |
+| Analog, Mux = Analog 1 | rms 39, peak 3795 (real signal) |
+| Analog, Mux = Analog 2 | rms 10, peak 39 (dead) |
+| Digital (PDM) | rms 32768 (rails; there is no PDM mic) |
+| source IN2L | rms 23739 (rails) |
+
+**Gain.** `IN1L Volume` is the analogue PGA and sits at **0 dB, its minimum**,
+with 31 dB available, and the digital volume also starts at exactly 0 dB. So the
+mic works out of the box with no gain at all, roughly 20 dB above its own noise
+floor. +20 dB analogue puts the peak at 30683, half a dB from clipping, so it is
+set to +12 dB analogue and +6 dB digital.
+
+## 6b. Not working: the microphone is not a desktop source
+
+Capture works from ALSA. It does **not** appear in PipeWire, and adding a
+`SectionDevice."Mic"` to the UCM profile **breaks the whole card**: the speaker
+sink disappears and WirePlumber falls back to a Dummy Output. Reverting restores
+it, so the capture device is the cause.
+
+What it is *not*, all checked:
+
+* not a parse error. With debug logging WirePlumber reads the device,
+  `CapturePCM`, priority and channels, reports "Found UCM profiles", builds
+  `UCM mapping: HiFi: Mic: source dev Mic`, and prints `n_input_mappings=1,
+  n_output_mappings=1, supported=yes`.
+* not the two devices sharing `hw:0,0`; putting capture on `hw:0,1` fails the
+  same way.
+* not the enable sequence; a minimal device with only `CapturePriority` and
+  `CapturePCM` fails too.
+
+Left on the playback-only profile, because a working speaker sink is worth more
+than an unproven capture device and the mic is reachable from ALSA meanwhile.
+
+### The old plan, kept because the reasoning still applies
 
 The codec is up; the audio path to it is not. From the sound card node in
 Samsung's overlay (`qcom,sm8150-asoc-snd-cooke`):
