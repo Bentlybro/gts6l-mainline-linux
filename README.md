@@ -65,7 +65,7 @@ SoC brought up.
 | Screenshots | working | power + volume-down chord, and a button in the system tray; both copy to the clipboard and save to `~/Pictures/Screenshots` - see [`docs/DESKTOP.md`](docs/DESKTOP.md) |
 | Surviving distro upgrades | working | RPM silently reverts the lock-screen and keyboard customisations (package-owned, not `%config`, no `.rpmsave`). `tabs6-desktop-patches.service` re-applies them every boot |
 | Bluetooth (WCN3990 UART) | working | `hci_qca` on a UART mainline never declared (0xc8c000 is only i2c13/spi13 upstream). Firmware and the BD address both come off the device itself - see [`docs/BLUETOOTH.md`](docs/BLUETOOTH.md) |
-| Audio | blocked | four Cirrus CS35L41 amps and a CS48L33, not the Qualcomm codec. Blocked at the first step: TrustZone authenticates the ADSP image and then refuses `pas_mem_setup` - see [`docs/AUDIO.md`](docs/AUDIO.md) |
+| Audio | works | speakers, via the ADSP + APR + Secondary TDM to four Cirrus CS35L41 amps, with an ALSA UCM profile so the desktop gets a real sink. Headphone jack needs a CS48L33 driver that does not exist upstream - see [`docs/AUDIO.md`](docs/AUDIO.md) |
 | S Pen | not done | see [`docs/PORT.md`](docs/PORT.md) |
 
 Read [`docs/PORT.md`](docs/PORT.md) for the full hardware map and

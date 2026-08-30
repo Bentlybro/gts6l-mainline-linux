@@ -5,6 +5,9 @@
 
 /dts-v1/;
 
+#include <dt-bindings/soc/qcom,apr.h>
+#include <dt-bindings/sound/qcom,q6asm.h>
+#include <dt-bindings/sound/qcom,q6dsp-lpass-ports.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
 #include <dt-bindings/gpio/gpio.h>
 #include "sm8150.dtsi"
@@ -82,6 +85,56 @@
 		regulator-boot-on;
 
 		vin-supply = <&vph_pwr>;
+	};
+
+	/*
+	 * pinctrl lives on this node on purpose: the driver core applies a
+	 * platform device's "default" pinctrl state at probe, and nothing else
+	 * in the q6 chain claims the TDM pins.
+	 */
+	sound {
+		compatible = "qcom,sm8150-sndcard";
+		model = "SM-T860";
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&sec_tdm_active>;
+
+		mm1-dai-link {
+			link-name = "MultiMedia1";
+
+			cpu {
+				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
+			};
+		};
+
+		mm2-dai-link {
+			link-name = "MultiMedia2";
+
+			cpu {
+				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA2>;
+			};
+		};
+
+		speaker-dai-link {
+			link-name = "Secondary TDM Playback";
+
+			cpu {
+				sound-dai = <&q6afedai SECONDARY_TDM_RX_0>;
+			};
+
+			platform {
+				sound-dai = <&q6routing>;
+			};
+
+			codec {
+				/*
+				 * Order matters: the machine driver hands amp N
+				 * TDM slot N, so this is slot 0..3.
+				 */
+				sound-dai = <&cs35l41_l 0>, <&cs35l41_r 0>,
+					    <&cs35l41_bl 0>, <&cs35l41_br 0>;
+			};
+		};
 	};
 
 	gpio-keys {
@@ -406,6 +459,174 @@
 	status = "okay";
 	clock-frequency = <400000>;
 
+	/* top right speaker (Samsung's cirrus,mfd-suffix) */
+	cs35l41_r: speaker-amp@40 {
+		compatible = "cirrus,cs35l41";
+		reg = <0x40>;
+		#sound-dai-cells = <1>;
+		sound-name-prefix = "R";
+
+		interrupt-parent = <&tlmm>;
+		interrupts = <133 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 148 GPIO_ACTIVE_HIGH>;
+
+		/*
+		 * Samsung wires VA and VP to a dummy always-on regulator, so the
+		 * rails are simply not switchable here.
+		 */
+		VA-supply = <&vreg_s4a_1p8>;
+		VP-supply = <&vph_pwr>;
+
+		/*
+		 * 4100 mA is Samsung's own value (0x1004 in the overlay), and the
+		 * driver range-checks it (1600..4500).
+		 *
+		 * The inductor and capacitor are NOT in Samsung's overlay, and the
+		 * driver rejects them as absent rather than falling back to
+		 * anything: "Invalid boost inductor value: -1 nH". So they have to
+		 * be supplied. 1000 nH is the CS35L41 datasheet reference design and
+		 * is what every cs35l41 device in mainline uses (Sony Xperia on
+		 * sm8250, sm8350 and sm8450). The capacitance only selects a
+		 * coefficient range and 0..19 uF all land in range 0, so 15 is the
+		 * same programming as anything else a design like this would use.
+		 * The inductor is the one genuine assumption here.
+		 */
+		cirrus,boost-peak-milliamp = <4100>;
+		cirrus,boost-ind-nanohenry = <1000>;
+		cirrus,boost-cap-microfarad = <15>;
+		cirrus,asp-sdout-hiz = <3>;
+
+		/* Samsung's cirrus,gpio-config2: src-select 4, output enabled. */
+		cirrus,gpio2-src-select = <4>;
+		cirrus,gpio2-output-enable;
+	};
+
+	/* top left speaker (Samsung's cirrus,mfd-suffix) */
+	cs35l41_l: speaker-amp@41 {
+		compatible = "cirrus,cs35l41";
+		reg = <0x41>;
+		#sound-dai-cells = <1>;
+		sound-name-prefix = "L";
+
+		interrupt-parent = <&tlmm>;
+		interrupts = <133 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 148 GPIO_ACTIVE_HIGH>;
+
+		/*
+		 * Samsung wires VA and VP to a dummy always-on regulator, so the
+		 * rails are simply not switchable here.
+		 */
+		VA-supply = <&vreg_s4a_1p8>;
+		VP-supply = <&vph_pwr>;
+
+		/*
+		 * 4100 mA is Samsung's own value (0x1004 in the overlay), and the
+		 * driver range-checks it (1600..4500).
+		 *
+		 * The inductor and capacitor are NOT in Samsung's overlay, and the
+		 * driver rejects them as absent rather than falling back to
+		 * anything: "Invalid boost inductor value: -1 nH". So they have to
+		 * be supplied. 1000 nH is the CS35L41 datasheet reference design and
+		 * is what every cs35l41 device in mainline uses (Sony Xperia on
+		 * sm8250, sm8350 and sm8450). The capacitance only selects a
+		 * coefficient range and 0..19 uF all land in range 0, so 15 is the
+		 * same programming as anything else a design like this would use.
+		 * The inductor is the one genuine assumption here.
+		 */
+		cirrus,boost-peak-milliamp = <4100>;
+		cirrus,boost-ind-nanohenry = <1000>;
+		cirrus,boost-cap-microfarad = <15>;
+		cirrus,asp-sdout-hiz = <3>;
+
+		/* Samsung's cirrus,gpio-config2: src-select 4, output enabled. */
+		cirrus,gpio2-src-select = <4>;
+		cirrus,gpio2-output-enable;
+	};
+
+	/* bottom right speaker (Samsung's cirrus,mfd-suffix) */
+	cs35l41_br: speaker-amp@42 {
+		compatible = "cirrus,cs35l41";
+		reg = <0x42>;
+		#sound-dai-cells = <1>;
+		sound-name-prefix = "BR";
+
+		interrupt-parent = <&tlmm>;
+		interrupts = <133 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 148 GPIO_ACTIVE_HIGH>;
+
+		/*
+		 * Samsung wires VA and VP to a dummy always-on regulator, so the
+		 * rails are simply not switchable here.
+		 */
+		VA-supply = <&vreg_s4a_1p8>;
+		VP-supply = <&vph_pwr>;
+
+		/*
+		 * 4100 mA is Samsung's own value (0x1004 in the overlay), and the
+		 * driver range-checks it (1600..4500).
+		 *
+		 * The inductor and capacitor are NOT in Samsung's overlay, and the
+		 * driver rejects them as absent rather than falling back to
+		 * anything: "Invalid boost inductor value: -1 nH". So they have to
+		 * be supplied. 1000 nH is the CS35L41 datasheet reference design and
+		 * is what every cs35l41 device in mainline uses (Sony Xperia on
+		 * sm8250, sm8350 and sm8450). The capacitance only selects a
+		 * coefficient range and 0..19 uF all land in range 0, so 15 is the
+		 * same programming as anything else a design like this would use.
+		 * The inductor is the one genuine assumption here.
+		 */
+		cirrus,boost-peak-milliamp = <4100>;
+		cirrus,boost-ind-nanohenry = <1000>;
+		cirrus,boost-cap-microfarad = <15>;
+		cirrus,asp-sdout-hiz = <3>;
+
+		/* Samsung's cirrus,gpio-config2: src-select 4, output enabled. */
+		cirrus,gpio2-src-select = <4>;
+		cirrus,gpio2-output-enable;
+	};
+
+	/* bottom left speaker (Samsung's cirrus,mfd-suffix) */
+	cs35l41_bl: speaker-amp@43 {
+		compatible = "cirrus,cs35l41";
+		reg = <0x43>;
+		#sound-dai-cells = <1>;
+		sound-name-prefix = "BL";
+
+		interrupt-parent = <&tlmm>;
+		interrupts = <133 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&tlmm 148 GPIO_ACTIVE_HIGH>;
+
+		/*
+		 * Samsung wires VA and VP to a dummy always-on regulator, so the
+		 * rails are simply not switchable here.
+		 */
+		VA-supply = <&vreg_s4a_1p8>;
+		VP-supply = <&vph_pwr>;
+
+		/*
+		 * 4100 mA is Samsung's own value (0x1004 in the overlay), and the
+		 * driver range-checks it (1600..4500).
+		 *
+		 * The inductor and capacitor are NOT in Samsung's overlay, and the
+		 * driver rejects them as absent rather than falling back to
+		 * anything: "Invalid boost inductor value: -1 nH". So they have to
+		 * be supplied. 1000 nH is the CS35L41 datasheet reference design and
+		 * is what every cs35l41 device in mainline uses (Sony Xperia on
+		 * sm8250, sm8350 and sm8450). The capacitance only selects a
+		 * coefficient range and 0..19 uF all land in range 0, so 15 is the
+		 * same programming as anything else a design like this would use.
+		 * The inductor is the one genuine assumption here.
+		 */
+		cirrus,boost-peak-milliamp = <4100>;
+		cirrus,boost-ind-nanohenry = <1000>;
+		cirrus,boost-cap-microfarad = <15>;
+		cirrus,asp-sdout-hiz = <3>;
+
+		/* Samsung's cirrus,gpio-config2: src-select 4, output enabled. */
+		cirrus,gpio2-src-select = <4>;
+		cirrus,gpio2-output-enable;
+	};
+
 
 	da7280@4a {
 		compatible = "dlg,da7280";
@@ -481,24 +702,9 @@
 	status = "okay";
 };
 
-&remoteproc_adsp {
-	status = "okay";
-	firmware-name = "qcom/sm8150/microsoft/adsp.mdt";
-};
-
-&remoteproc_cdsp {
-	status = "okay";
-	firmware-name = "qcom/sm8150/microsoft/cdsp.mdt";
-};
-
 &remoteproc_mpss {
 	status = "okay";
 	firmware-name = "qcom/sm8150/gts6l/modem.mdt";
-};
-
-&remoteproc_slpi {
-	status = "okay";
-	firmware-name = "qcom/sm8150/microsoft/slpi.mdt";
 };
 
 &pon_resin {
@@ -508,7 +714,36 @@
 };
 
 &tlmm {
-	gpio-reserved-ranges = <0 4>, <126 4>;
+	/*
+	 * <126 4> came from the Surface Duo and reserves gpio126..129, which on
+	 * this board are exactly the Secondary TDM pins (sck, ws, din, dout)
+	 * feeding the four speaker amps. Reserving them makes the pinmux refuse
+	 * to hand them out and there is no audio.
+	 */
+	gpio-reserved-ranges = <0 4>;
+
+	sec_tdm_active: sec-tdm-active-state {
+		sck-ws-pins {
+			pins = "gpio126", "gpio127";
+			function = "sec_mi2s";
+			drive-strength = <12>;
+			bias-disable;
+		};
+
+		din-pins {
+			pins = "gpio128";
+			function = "sec_mi2s";
+			drive-strength = <12>;
+			bias-disable;
+		};
+
+		dout-pins {
+			pins = "gpio129";
+			function = "sec_mi2s";
+			drive-strength = <12>;
+			bias-disable;
+		};
+	};
 
 	mdss_te_default: mdss-te-default-state {
 		pins = "gpio8";
@@ -581,61 +816,169 @@
 };
 
 /*
- * ADSP enabled for audio. Nothing about audio can happen until this runs.
+ * ADSP: ENABLED, and the memory layout below is the entire reason it works.
  *
- * Memory checked before flipping this on: adsp_mem is 0x8be00000 + 0x1a00000,
- * so it ends exactly where our extended mpss_mem begins at 0x8d800000. Adjacent,
- * not overlapping. venus/slpi were already relocated above the modem.
+ * qcom_mdt_pas_init() hands TrustZone
+ *
+ *     qcom_scm_pas_mem_setup(pas_id, mem_phys, max_addr - min_addr)
+ *
+ * where the size is the image's own loadable span, computed from the ELF and
+ * completely independent of how big this reservation is. For this device's
+ * adsp.mdt (ADSP.HT.5.0.c1-00046-SM8150-1, from apnhlos) that span is
+ * 0x2700000, 39 MB.
+ *
+ * TZ then enforces two things at once, and the canonical carveout fails both:
+ *
+ *   - the region must be at least the full 39 MB span. 26 MB is refused at any
+ *     address.
+ *   - the region must not overlap anything TZ already owns. 39 MB starting at
+ *     the canonical 0x8be00000 runs into mpss_mem at 0x8d800000 where the modem
+ *     is already live, so that is refused too.
+ *
+ * So 0x8be00000 can never work: too small as declared, and too big to fit.
+ * Both failures surface as the same "-22 setting up firmware", because TZ
+ * answers 0xffcfffba and qcom_scm_remap_error() does not know that code, so it
+ * flattens it (and everything else it does not know) onto -EINVAL. That is why
+ * the error looked identical for every experiment.
+ *
+ * Measured by making the SCM call raw from a test module, all after a
+ * successful pas_init_image:
+ *
+ *     0x8be00000  26 MB  refused      0x98900000  26 MB  refused
+ *     0x8be00000  39 MB  refused      0x98900000  39 MB  ACCEPTED
+ *                                     0x98900000  40 MB  accepted
+ *                                     0x98900000  45 MB  accepted
+ *
+ * Do not "tidy" this back to the canonical address. Note also the ceiling:
+ * usable DRAM ends near 0x9ff90000 with a hole above it, so a 39 MB region at
+ * 0x9f800000 runs off the end of RAM and is refused for that reason instead.
+ *
+ * mpss_mem is 160 MB for exactly the same reason: modem.mdt's span is exactly
+ * 0xa000000. Same rule, different subsystem, found the hard way twice.
  *
  * Firmware is this device's own adsp.mdt plus segments from apnhlos, not the
  * Surface Duo path sm8150.dtsi defaults to.
- *
- * cdsp stays off: it is the compute DSP, nothing here needs it, and it would
- * only cost memory and boot time.
  */
+&adsp_mem { reg = <0x0 0x98900000 0x0 0x2800000>; };	/* 40 MB; span needs 39 */
+
 /*
- * ADSP: left DISABLED, and the reason is worth keeping.
- *
- * Audio needs this running. It does not run. With this device's own adsp.mdt
- * (build ADSP.HT.5.0.c1-00046-SM8150-1, lifted from apnhlos) the boot gets
- * remarkably far and then stops in one specific place:
- *
- *   remoteproc remoteproc1: Booting fw image qcom/sm8150/gts6l/adsp.mdt
- *   qcom_q6v5_pas 17300000.remoteproc: error -22 setting up firmware
- *
- * That message is from mdt_loader.c and it is NOT the image being rejected.
- * qcom_scm_pas_init_image() runs FIRST and succeeds, so TrustZone has parsed
- * and authenticated the firmware. The failure is the very next call:
- *
- *   qcom_scm_pas_mem_setup(pas_id, mem_phys, max_addr - min_addr)  ->  -EINVAL
- *
- * i.e. TZ accepts the image and then refuses to let us place it.
- *
- * Tried and ruled out:
- *   - the canonical adsp_mem (0x8be00000, 26 MB): identical failure
- *   - a correctly sized 39 MB region at 0x9f800000, inside a 520 MB hole with
- *     nothing reserved in it and clear of every firmware carveout: identical
- *     failure. So it is not our address choice and not the size.
- *
- * Note the image genuinely wants 39 MB of loadable span (0x8be00000..0x8e500000
- * with hash segments filtered exactly as mdt_phdr_valid does), while both
- * mainline AND downstream declare 26 MB, and growing it in place would collide
- * with mpss_mem at 0x8d800000, whose address is fixed by the signed modem image.
- * That contradiction is unexplained and is probably the thread to pull next.
- *
- * This is the same family as the pm8150b SPMI denial and the wlan MSA assign:
- * Samsung TZ owns something and declines. See BATTERY.md and WIFI.md.
+ * cdsp is not used, so park its reservation on the old ADSP carveout. That
+ * keeps 0x8be00000 carved out of System RAM, which matters because Samsung's
+ * firmware still believes that region belongs to the ADSP.
  */
-&remoteproc_adsp { status = "disabled"; };
+&cdsp_mem { reg = <0x0 0x8be00000 0x0 0x1a00000>; };
+
+&remoteproc_adsp {
+	status = "okay";
+	firmware-name = "qcom/sm8150/gts6l/adsp.mdt";
+
+	/*
+	 * APR, the audio packet router, rides the GLINK edge the ADSP brings up.
+	 * sm8150.dtsi has no apr node at all; this is the sdm845/sm8250 shape,
+	 * which is portable because the ADSP side of it is firmware, not SoC.
+	 *
+	 * The q6asm SID is inferred, not documented: sdm845 pairs fastrpc
+	 * compute-cb 0x1823 with q6asm 0x1821, and our fastrpc cbs are 0x1b23,
+	 * 0x1b24 and 0x1b25, so the matching q6asm SID is 0x1b21. If that is
+	 * wrong it shows up as an apps_smmu context fault on playback, not at
+	 * probe.
+	 *
+	 * qcom,protection-domain is deliberately left off. Upstream sets
+	 * "avs/audio"/"msm/adsp/audio_pd", which makes apr wait on a PDR lookup
+	 * served by pd-mapper. It is optional, and leaving it out lets these
+	 * probe as soon as the channel opens rather than adding a userspace
+	 * dependency to the first bring-up.
+	 */
+	glink-edge {
+		apr {
+			compatible = "qcom,apr-v2";
+			qcom,glink-channels = "apr_audio_svc";
+			qcom,domain = <APR_DOMAIN_ADSP>;
+			qcom,intents = <512 20>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			service@3 {
+				compatible = "qcom,q6core";
+				reg = <APR_SVC_ADSP_CORE>;
+			};
+
+			q6afe: service@4 {
+				compatible = "qcom,q6afe";
+				reg = <APR_SVC_AFE>;
+
+				q6afedai: dais {
+					compatible = "qcom,q6afe-dais";
+					#address-cells = <1>;
+					#size-cells = <0>;
+					#sound-dai-cells = <1>;
+				};
+
+				q6afecc: clock-controller {
+					compatible = "qcom,q6afe-clocks";
+					#clock-cells = <2>;
+				};
+			};
+
+			q6asm: service@7 {
+				compatible = "qcom,q6asm";
+				reg = <APR_SVC_ASM>;
+
+				q6asmdai: dais {
+					compatible = "qcom,q6asm-dais";
+					#address-cells = <1>;
+					#size-cells = <0>;
+					#sound-dai-cells = <1>;
+					iommus = <&apps_smmu 0x1b21 0x0>;
+				};
+			};
+
+			q6adm: service@8 {
+				compatible = "qcom,q6adm";
+				reg = <APR_SVC_ADM>;
+
+				q6routing: routing {
+					compatible = "qcom,q6adm-routing";
+					#sound-dai-cells = <0>;
+				};
+			};
+		};
+	};
+};
 &remoteproc_cdsp { status = "disabled"; };
+
+/*
+ * Audio front ends (what userspace opens) and the one back end this board
+ * actually has: Secondary TDM out to the four CS35L41 amps. The TDM timing
+ * values are copied from Samsung's overlay node qcom,msm-dai-tdm-sec-rx, which
+ * overrides the generic sm8150 reference values in the base DTB. Use the
+ * overlay's, not the base DTB's: they differ in sync-mode and invert-sync.
+ */
+&q6asmdai {
+	dai@0 { reg = <0>; };
+	dai@1 { reg = <1>; };
+	dai@2 { reg = <2>; };
+};
+
+&q6afedai {
+	dai@40 {
+		reg = <SECONDARY_TDM_RX_0>;
+		qcom,tdm-sync-mode = <0>;
+		qcom,tdm-sync-src = <1>;
+		qcom,tdm-data-out = <0>;
+		qcom,tdm-invert-sync = <0>;
+		qcom,tdm-data-delay = <1>;
+		qcom,tdm-data-align = <0>;
+	};
+};
 /* mpss ENABLED for wifi: WCN3990 wlan fw runs on the modem Q6 */
 
 /* 2023 Samsung modem image needs 160MB from 0x8d800000 (ELF phdr truth);
  * venus/slpi regions relocated out of its way - their devices are disabled,
  * the reservations just must not collide with anything. */
 &mpss_mem { reg = <0x0 0x8d800000 0x0 0xa000000>; };
-&venus_mem { reg = <0x0 0x99d00000 0x0 0x500000>; };
-&slpi_mem { reg = <0x0 0x9a200000 0x0 0x1400000>; };
+&venus_mem { reg = <0x0 0x9b100000 0x0 0x500000>; };
+&slpi_mem { reg = <0x0 0x9b600000 0x0 0x400000>; };
 
 /* Samsung TZ rejects the rmtfs assign-to-MSS scm call (-22) and Samsung's
  * own dt does no vmid assign on this region - drop it so the device probes

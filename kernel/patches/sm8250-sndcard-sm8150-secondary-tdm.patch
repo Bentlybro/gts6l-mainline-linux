@@ -1,0 +1,215 @@
+--- a/sound/soc/qcom/sm8250.c
++++ b/sound/soc/qcom/sm8250.c
+@@ -7,6 +7,7 @@
+ #include <sound/soc.h>
+ #include <sound/soc-dapm.h>
+ #include <sound/pcm.h>
++#include <sound/pcm_params.h>
+ #include <linux/soundwire/sdw.h>
+ #include <sound/jack.h>
+ #include <linux/input-event-codes.h>
+@@ -17,6 +18,33 @@
+ #define DRIVER_NAME		"sm8250"
+ #define MI2S_BCLK_RATE		1536000
+ 
++/* Secondary TDM on the Galaxy Tab S6: four CS35L41 amps share one bus. */
++#define TDM_SLOTS		4
++
++/*
++ * 16 bit slots, NOT the 32 that Samsung's own overlay programs.
++ *
++ * cs35l41_pcm_hw_params() writes params_width() into BOTH the ASP slot width
++ * and the ASP word length, so the sample width and the TDM slot width have to
++ * be the same number. Give the DSP 32 bit slots while the amp believes they are
++ * 16, and each amp reads the wrong bit positions of the frame: some speakers
++ * get the right data, the rest get padding and neighbouring samples, and it
++ * comes out as loud crunching noise rather than as silence.
++ *
++ * cs35l41 supports only S16_LE and S24_LE, and q6afe accepts only 16 or 32 bit
++ * slots, so 16 everywhere is the single self consistent choice. The bit clock
++ * follows from it: 4 x 16 x 48 kHz = 3.072 MHz, half of Samsung's 6.144 MHz.
++ */
++#define TDM_SLOT_WIDTH		16
++
++/*
++ * Byte offsets of each slot within the frame, so slot n starts at byte
++ * n * TDM_SLOT_WIDTH / 8. q6afe wants these OFFSETS, while cs35l41's
++ * SP_FRAME_RX_SLOT wants the slot INDEX: two different units for the same
++ * thing, and only the DSP complains when they are mixed up.
++ */
++static unsigned int tdm_slot_offset[TDM_SLOTS] = { 0, 2, 4, 6 };
++
+ struct sm8250_snd_data {
+ 	bool stream_prepared[AFE_PORT_MAX];
+ 	struct snd_soc_card *card;
+@@ -39,10 +67,28 @@
+ 					SNDRV_PCM_HW_PARAM_RATE);
+ 	struct snd_interval *channels = hw_param_interval(params,
+ 					SNDRV_PCM_HW_PARAM_CHANNELS);
++	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
++	struct snd_mask *fmt;
+ 
+ 	rate->min = rate->max = 48000;
+ 	channels->min = channels->max = 2;
+ 
++	switch (cpu_dai->id) {
++	case SECONDARY_TDM_RX_0:
++	case SECONDARY_TDM_TX_0:
++		/*
++		 * Pin the wire format. cs35l41 takes its ASP slot width from
++		 * params_width(), so letting a 24 bit stream reach the backend
++		 * would put the amp back out of step with the 16 bit slots.
++		 */
++		fmt = hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT);
++		snd_mask_none(fmt);
++		snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);
++		break;
++	default:
++		break;
++	}
++
+ 	return 0;
+ }
+ 
+@@ -71,6 +117,22 @@
+ 		snd_soc_dai_set_fmt(cpu_dai, fmt);
+ 		snd_soc_dai_set_fmt(codec_dai, codec_dai_fmt);
+ 		break;
++	case SECONDARY_TDM_RX_0:
++	case SECONDARY_TDM_TX_0: {
++		struct snd_soc_dai *cdai;
++		int j;
++
++		fmt |= SND_SOC_DAIFMT_IB_NF | SND_SOC_DAIFMT_DSP_A;
++		codec_dai_fmt |= SND_SOC_DAIFMT_IB_NF | SND_SOC_DAIFMT_DSP_A;
++
++		snd_soc_dai_set_fmt(cpu_dai, fmt);
++
++		for_each_rtd_codec_dais(rtd, j, cdai)
++			snd_soc_dai_set_fmt(cdai, codec_dai_fmt);
++
++		/* clocks, slot geometry and channel maps: see hw_params */
++		break;
++	}
+ 	default:
+ 		break;
+ 	}
+@@ -89,12 +151,110 @@
+ 	sdw_release_stream(sruntime);
+ }
+ 
++static int sm8250_tdm_hw_params(struct snd_soc_pcm_runtime *rtd,
++				struct snd_pcm_hw_params *params,
++				int stream)
++{
++	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
++	unsigned int channels = params_channels(params);
++	unsigned int bclk, mask;
++	struct snd_soc_dai *cdai;
++	int ret, j;
++
++	if (!channels || channels > TDM_SLOTS)
++		return -EINVAL;
++
++	/* The fixup above pins this, so a mismatch here means it did not run. */
++	if (params_width(params) != TDM_SLOT_WIDTH)
++		return -EINVAL;
++
++	mask = GENMASK(channels - 1, 0);
++	bclk = TDM_SLOTS * TDM_SLOT_WIDTH * params_rate(params);
++
++	ret = snd_soc_dai_set_sysclk(cpu_dai, Q6AFE_LPASS_CLK_ID_SEC_TDM_IBIT,
++				     bclk, SNDRV_PCM_STREAM_PLAYBACK);
++	if (ret)
++		return ret;
++
++	/*
++	 * The DSP needs both halves of this: the slot geometry, and a slot
++	 * mapping for every channel. Without the mapping,
++	 * afe_param_id_slot_mapping_cfg goes out all zeroes and
++	 * AFE_PORT_CMD_SET_PARAM_V2 (0x100ef) comes straight back as
++	 * "DSP returned error[2]", which says nothing about which half is wrong.
++	 */
++	if (stream == SNDRV_PCM_STREAM_PLAYBACK) {
++		ret = snd_soc_dai_set_tdm_slot(cpu_dai, 0, mask,
++					       TDM_SLOTS, TDM_SLOT_WIDTH);
++		if (ret)
++			return ret;
++
++		ret = snd_soc_dai_set_channel_map(cpu_dai, 0, NULL,
++						  channels, tdm_slot_offset);
++	} else {
++		ret = snd_soc_dai_set_tdm_slot(cpu_dai, mask, 0,
++					       TDM_SLOTS, TDM_SLOT_WIDTH);
++		if (ret)
++			return ret;
++
++		ret = snd_soc_dai_set_channel_map(cpu_dai, channels,
++						  tdm_slot_offset, 0, NULL);
++	}
++	if (ret)
++		return ret;
++
++	/*
++	 * One amp per slot, in the order the codecs are listed in the dai-link.
++	 * cs35l41 has no set_tdm_slot op, so its slot is chosen through
++	 * set_channel_map, and it wants a slot index rather than a byte offset.
++	 */
++	for_each_rtd_codec_dais(rtd, j, cdai) {
++		unsigned int slot = j;
++
++		/*
++		 * cs35l41 has TWO clock entry points and needs both. The
++		 * component one points its PLL at the ASP bit clock (clk id 0
++		 * is CS35L41_CLKID_SCLK), the DAI one sets the clock monitor
++		 * window. Miss them and the amp never finishes powering up:
++		 * cs35l41_global_enable() polls for PUP_DONE and gives up with
++		 * "Enable(1) failed: -110", which reads like a dead amp rather
++		 * than an unconfigured clock.
++		 */
++		ret = snd_soc_component_set_sysclk(cdai->component, 0, 0,
++						   bclk, SND_SOC_CLOCK_IN);
++		if (ret && ret != -ENOTSUPP)
++			return ret;
++
++		ret = snd_soc_dai_set_sysclk(cdai, 0, bclk, SND_SOC_CLOCK_IN);
++		if (ret && ret != -ENOTSUPP)
++			return ret;
++
++		ret = snd_soc_dai_set_channel_map(cdai, 1, &slot, 1, &slot);
++		if (ret && ret != -ENOTSUPP)
++			return ret;
++	}
++
++	return 0;
++}
++
+ static int sm8250_snd_hw_params(struct snd_pcm_substream *substream,
+ 				struct snd_pcm_hw_params *params)
+ {
+ 	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+ 	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+ 	struct sm8250_snd_data *pdata = snd_soc_card_get_drvdata(rtd->card);
++	int ret;
++
++	switch (cpu_dai->id) {
++	case SECONDARY_TDM_RX_0:
++	case SECONDARY_TDM_TX_0:
++		ret = sm8250_tdm_hw_params(rtd, params, substream->stream);
++		if (ret)
++			return ret;
++		break;
++	default:
++		break;
++	}
+ 
+ 	return qcom_snd_sdw_hw_params(substream, params, &pdata->sruntime[cpu_dai->id]);
+ }
+@@ -173,6 +333,7 @@
+ }
+ 
+ static const struct of_device_id snd_sm8250_dt_match[] = {
++	{.compatible = "qcom,sm8150-sndcard"},
+ 	{.compatible = "qcom,sm8250-sndcard"},
+ 	{.compatible = "qcom,qrb4210-rb2-sndcard"},
+ 	{.compatible = "qcom,qrb5165-rb5-sndcard"},

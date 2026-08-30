@@ -69,7 +69,8 @@ DSC (from the device's downstream panel node).
 | Charge control / charging current | ✅ | 2000 mA input / 2000 mA into the battery, maintained (the registers reset when the cable moves) by `tools/tabs6-charge.sh`. AICL walks it back on a weak supply, so overshooting is safe — [`BATTERY.md`](BATTERY.md) |
 | S Pen (Wacom W9021) | ⬜ | wacom@0x56 on i2c14, irq gpio 5, pdct 53, fwe 11 |
 | Bluetooth (WCN3990 UART) | ✅ | `hci_qca` over `serial@c8c000` (QUP2 SE3), a UART personality mainline never declared. Needs an alias for the port index, the device's own crbtfw21/crnv21 under the name the driver derives, and a BD address from `/efs/bluetooth/bt_addr` — [`BLUETOOTH.md`](BLUETOOTH.md) |
-| Audio | 🚧 | four `cirrus,cs35l41` amps (I2C 0x40-0x43) + `cirrus,cs48l33` (SPI), described in the DTBO not the kernel DTB. Blocked at the ADSP: TZ authenticates the image then refuses `qcom_scm_pas_mem_setup` with -22 — [`AUDIO.md`](AUDIO.md) |
+| Audio (speakers) | ✅ | ADSP + APR + Secondary TDM to four `cirrus,cs35l41` amps (I2C 0x40-0x43), ALSA UCM profile for the desktop sink — [`AUDIO.md`](AUDIO.md) |
+| Audio (headphones) | ⬜ | `cirrus,cs48l33` has no mainline driver |
 
 Current state: the tablet is a self-sufficient machine. It boots from its own internal
 storage into Fedora 44 + KDE Plasma with working touch, GPU acceleration and its own
