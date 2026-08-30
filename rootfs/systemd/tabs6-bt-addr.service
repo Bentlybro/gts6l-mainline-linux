@@ -1,0 +1,13 @@
+[Unit]
+Description=Set the Tab S6 Bluetooth public address (the controller has none)
+After=bluetooth.service
+Wants=bluetooth.service
+Before=graphical.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/tabs6-bt-addr.sh
+
+[Install]
+WantedBy=multi-user.target

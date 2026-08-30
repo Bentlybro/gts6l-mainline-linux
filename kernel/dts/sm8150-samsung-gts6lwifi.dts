@@ -19,6 +19,16 @@
 
 	aliases {
 		serial0 = &uart2;
+		/*
+		 * qcom_geni_serial takes its port index from an alias, trying
+		 * "serial" then "hsuart". With neither present of_alias_get_id
+		 * returns -ENODEV and the probe dies with the shruggingly
+		 * unhelpful "Invalid line -19". Downstream calls this same node
+		 * hsuart0; serial1 is the mainline spelling and the non-console
+		 * driver has its own 3-entry port array, so it does not collide
+		 * with serial0 above.
+		 */
+		serial1 = &uart13;
 	};
 
 	memory@80000000 {
@@ -953,3 +963,98 @@
  * Reading the RTC works, and alarms work, which is what suspend/resume
  * needs. Wall clock time comes from systemd-timesyncd instead.
  */
+
+/*
+ * Bluetooth: WCN3990 over UART.
+ *
+ * Same chip as the Wi-Fi side, but a completely separate transport: Wi-Fi is
+ * ath10k_snoc talking to firmware on the modem DSP, while Bluetooth is a plain
+ * HCI UART that mainline's hci_qca drives directly. The supplies are therefore
+ * the same four rails the &wifi node already uses.
+ *
+ * The catch is that mainline's sm8150.dtsi describes this serial engine only as
+ * i2c13 and spi13. It is one QUP SE that can be any of i2c, spi or uart, and
+ * upstream simply never declared the uart personality for it. Downstream has it
+ * as qup_uart@0xc8c000 "qcom,msm-geni-serial-hs" and it is the ONLY high-speed
+ * UART downstream enables, which is what identifies it as the Bluetooth one.
+ *
+ * Pins come straight from the downstream qupv3_se13_4uart_pins group, and
+ * mainline's pinctrl already has a matching qup13 function covering exactly
+ * gpio43-46. BT_EN is gpio172, from downstream bt_en_active.
+ */
+&qupv3_id_2 {
+	uart13: serial@c8c000 {
+		compatible = "qcom,geni-uart";
+		reg = <0 0x00c8c000 0 0x4000>;
+		clock-names = "se";
+		clocks = <&gcc GCC_QUPV3_WRAP2_S3_CLK>;
+		interrupts = <GIC_SPI 585 IRQ_TYPE_LEVEL_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&qup_uart13_cts &qup_uart13_rts_tx &qup_uart13_rx>;
+		status = "okay";
+
+		bluetooth {
+			compatible = "qcom,wcn3990-bt";
+
+			/* The same rails as &wifi; this is one chip. */
+			vddio-supply = <&vreg_s4a_1p8>;
+			vddxo-supply = <&vreg_l7a_1p8>;
+			vddrf-supply = <&vreg_l2c_1p3>;
+			vddch0-supply = <&vreg_l11c_3p3>;
+
+			/*
+			 * Deliberately NO enable-gpios.
+			 *
+			 * A bt_en_active pinctrl state on gpio172 does exist in
+			 * the base DTB, and it is tempting to wire it up here.
+			 * It has zero consumers: the downstream BT node carries
+			 * no gpio properties at all, and the part is powered
+			 * purely by the three regulators above. Asserting an
+			 * unrelated pad because a pinctrl group mentions it is
+			 * how you break something that was working.
+			 */
+
+			max-speed = <3200000>;
+		};
+	};
+};
+
+&tlmm {
+	/*
+	 * These come from the states the downstream UART node actually points
+	 * at (qupv3_se13_uart_pins: cts_active / rtstx_active / rx_active), not
+	 * from the similarly named qupv3_se13_4uart_pins group next to it.
+	 *
+	 * The bias matters. Leaving these pins with no bias at all lets RX and
+	 * CTS float, and the symptom is not a dead UART - it is a working one
+	 * that occasionally garbles a frame. That showed up as
+	 * "Frame reassembly failed (-84)" during the QCA handshake, and a
+	 * corrupted version response makes hci_qca derive the wrong firmware
+	 * name from it.
+	 *
+	 * Downstream also sets output-high on rts/tx in the active state. That
+	 * is deliberately not copied: output-high on a pin muxed away from GPIO
+	 * is not meaningful to pinctrl-msm, and every upstream QUP UART state
+	 * omits it.
+	 */
+	qup_uart13_cts: qup-uart13-cts-state {
+		pins = "gpio43";
+		function = "qup13";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	qup_uart13_rts_tx: qup-uart13-rts-tx-state {
+		pins = "gpio44", "gpio45";
+		function = "qup13";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	qup_uart13_rx: qup-uart13-rx-state {
+		pins = "gpio46";
+		function = "qup13";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+};
