@@ -23,8 +23,10 @@ platform gpio-keys: deferred probe pending: gpio-keys: failed to get gpio
 
 Two unrelated causes behind it:
 
-- **Volume Up** is a PMIC GPIO (`&pm8150_gpios 6`), and `CONFIG_PINCTRL_QCOM_SPMI_PMIC` was
-  off, so that GPIO controller never existed and `gpio-keys` deferred forever.
+- **Volume Up** is a PMIC GPIO, and `CONFIG_PINCTRL_QCOM_SPMI_PMIC` was off, so that GPIO
+  controller never existed and `gpio-keys` deferred forever. (The pin itself was also wrong
+  for a long time: it is `&pm8150l_gpios 12`, not the Surface Duo's `&pm8150_gpios 6`. See
+  [DESKTOP.md](DESKTOP.md).)
 - **The power button is not a GPIO.** On Qualcomm it is the PMIC PON block's KPDPWR input,
   with "resin" beside it for volume down. Upstream `pm8150.dtsi` declares both and leaves
   them `status = "disabled"`.

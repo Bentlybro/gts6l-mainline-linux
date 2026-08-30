@@ -137,13 +137,29 @@
 		};
 	};
 
+	/*
+	 * Volume up. The Surface Duo had this on pm8150 gpio6 and it was
+	 * inherited unchanged, so the button emitted nothing at all: no events
+	 * on the gpio-keys evdev node. That looks exactly like a desktop
+	 * problem and is not one. Samsung's overlay puts it on the pm8150**L**
+	 * pinctrl at "gpio12", active low with a pull up.
+	 *
+	 * The cell is 1-based: qcom's spmi-gpio of_xlate subtracts
+	 * PMIC_GPIO_PHYSICAL_OFFSET, so 12 here is the pin named gpio12.
+	 *
+	 * Volume down is not here, it is the PMIC RESIN pin - see &pon_resin.
+	 */
 	gpio-keys {
 		compatible = "gpio-keys";
 
+		pinctrl-names = "default";
+		pinctrl-0 = <&key_vol_up_default>;
+
 		key-vol-up {
 			label = "Volume Up";
-			gpios = <&pm8150_gpios 6 GPIO_ACTIVE_LOW>;
+			gpios = <&pm8150l_gpios 12 GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_VOLUMEUP>;
+			debounce-interval = <15>;
 		};
 	};
 };
@@ -1187,6 +1203,17 @@
  * 1:3 pre-scaling; without it the driver reports a third of the real voltage.
  * VPH_PWR is the system rail and tracks the battery closely, so it is a useful
  * cross-check that VBAT_SNS is reading something real rather than noise. */
+/* Pin state for the volume up key; see the gpio-keys node for why pm8150L. */
+&pm8150l_gpios {
+	key_vol_up_default: key-vol-up-state {
+		pins = "gpio12";
+		function = "normal";
+		input-enable;
+		bias-pull-up;
+		power-source = <0>;
+	};
+};
+
 &pm8150b_adc {
 	channel@83 {
 		reg = <ADC5_VPH_PWR>;

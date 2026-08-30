@@ -246,6 +246,27 @@ dead amp and is an unconfigured clock. cs35l41 has a *component* level
 sets the clock monitor window. Without both, `cs35l41_global_enable()` polls for
 PUP_DONE and times out.
 
+**The slot map holds byte offsets, and the amps count in their own width.**
+Two separate things, both easy to get backwards.
+
+q6afe's `ch_mapping` takes **byte offsets** into the frame, so slot n is at byte
+`n * slot_width / 8`: `{ 0, 4, 8, 12 }` for 32 bit slots. Slot *indices* are not
+accepted - `{ 0, 1, 2, 3 }` puts channel 1 one byte inside slot 0 and the DSP
+rejects the whole port config with `error[2]` and no audio at all.
+
+cs35l41's `SP_FRAME_RX_SLOT` takes an **index**, but counted in the amp's own ASP
+slot width, which is `params_width()`. With 16 bit samples in 32 bit DSP slots
+each amp sees the frame as eight 16 bit slots, so amp N's data starts at amp-slot
+`N * 2`. Using N directly gives the first amp real audio, the second the padding
+half of the first channel, the third the second channel: it plays out of every
+speaker and sounds like loud crunching.
+
+**Feed the pairs, not the amps.** Four amps, a stereo stream, and only two slots
+carry anything, so amps 0 and 2 take channel 0 and amps 1 and 3 take channel 1.
+Mapping amp N to slot N parks half of them on slots nothing was written to, and
+on this tablet both amps that then had audio sit at the same end, so it plays out
+of one side only.
+
 **The slot width must equal the sample width.** This is the one that produced
 noise rather than music. `cs35l41_pcm_hw_params()` writes `params_width()` into
 BOTH the ASP slot width and the ASP word length. Driving 32 bit slots (Samsung's
@@ -281,6 +302,30 @@ Verified by deleting them and watching the boot script put them back.
 Nothing plays at boot: the amps only power up for a stream and a cold boot shows
 zero cs35l41 power events, and Plasma's login sound is already disarmed in this
 build.
+
+## 5b. Known issue: the first playback after boot fails
+
+Every boot, the first stream on MultiMedia1 fails and every one after it works:
+
+```
+qcom-q6asm: DSP returned error[1]
+q6asm-dai: Memory_map_regions failed
+q6asm-dai: Audio Start: Buffer Allocation failed rc = -22
+MultiMedia1: ASoC: error at dpcm_fe_dai_prepare on MultiMedia1: -12
+```
+
+This is **not fixed**. On one boot it came with a loud beep through the speakers,
+which is what a backend brought up around a frontend that then fails to prepare
+would sound like; on the next boot the identical failure produced no beep, so
+that link is unproven and the beep is intermittent.
+
+The prime suspect is the deliberate deviation in section 4: `qcom,protection-
+domain` is omitted, so the q6 services bind when the GLINK channel opens instead
+of waiting for the ADSP's audio protection domain. Adding it requires `pd-mapper`
+to answer the lookup; it is installed at `/usr/local/bin/pd-mapper` but has no
+unit and does not run. That change has a real failure mode - if the PD never
+reports ready, audio does not come up at all - so it wants testing, not a
+hopeful commit.
 
 ## 6. The headphone jack
 

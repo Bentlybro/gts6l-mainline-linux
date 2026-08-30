@@ -8,7 +8,7 @@
  #include <linux/soundwire/sdw.h>
  #include <sound/jack.h>
  #include <linux/input-event-codes.h>
-@@ -17,6 +18,33 @@
+@@ -17,6 +18,38 @@
  #define DRIVER_NAME		"sm8250"
  #define MI2S_BCLK_RATE		1536000
  
@@ -16,33 +16,38 @@
 +#define TDM_SLOTS		4
 +
 +/*
-+ * 16 bit slots, NOT the 32 that Samsung's own overlay programs.
++ * 32 bit slots, which with 4 slots at 48 kHz is the 6.144 MHz Samsung's own
++ * overlay programs (qcom,msm-cpudai-tdm-clk-rate = <0x5dc000>).
 + *
-+ * cs35l41_pcm_hw_params() writes params_width() into BOTH the ASP slot width
-+ * and the ASP word length, so the sample width and the TDM slot width have to
-+ * be the same number. Give the DSP 32 bit slots while the amp believes they are
-+ * 16, and each amp reads the wrong bit positions of the frame: some speakers
-+ * get the right data, the rest get padding and neighbouring samples, and it
-+ * comes out as loud crunching noise rather than as silence.
++ * The subtlety is that the DSP and the amps do not agree on what a slot is.
++ * cs35l41_pcm_hw_params() writes params_width() into the amp's ASP slot width,
++ * and the amp supports only S16_LE and S24_LE, so with 16 bit samples each amp
++ * counts the frame in 16 bit slots while the DSP lays it out in 32 bit ones.
++ * Amp N's data therefore starts at amp-slot N * (32 / 16), not at slot N.
 + *
-+ * cs35l41 supports only S16_LE and S24_LE, and q6afe accepts only 16 or 32 bit
-+ * slots, so 16 everywhere is the single self consistent choice. The bit clock
-+ * follows from it: 4 x 16 x 48 kHz = 3.072 MHz, half of Samsung's 6.144 MHz.
++ * Getting that wrong is not silence, it is noise: with slots 0,1,2,3 the first
++ * amp gets real audio, the second gets the padding half of the first channel,
++ * the third gets the second channel, and it plays out of every speaker while
++ * sounding like loud crunching.
 + */
-+#define TDM_SLOT_WIDTH		16
++#define TDM_SLOT_WIDTH		32
 +
 +/*
-+ * Byte offsets of each slot within the frame, so slot n starts at byte
-+ * n * TDM_SLOT_WIDTH / 8. q6afe wants these OFFSETS, while cs35l41's
-+ * SP_FRAME_RX_SLOT wants the slot INDEX: two different units for the same
-+ * thing, and only the DSP complains when they are mixed up.
++ * Which slot each channel goes in, as BYTE offsets into the frame: slot n
++ * starts at byte n * TDM_SLOT_WIDTH / 8.
++ *
++ * These are not slot indices, and the DSP is emphatic about it. Feeding it
++ * { 0, 1, 2, 3 } puts channel 1 one byte into slot 0 rather than at the start
++ * of slot 1, and AFE_PORT_CMD_SET_PARAM_V2 (0x100ef) comes back "DSP returned
++ * error[2]" with no audio at all. Same array shape as the downstream machine
++ * drivers, and for the same reason.
 + */
-+static unsigned int tdm_slot_offset[TDM_SLOTS] = { 0, 2, 4, 6 };
++static unsigned int tdm_slot_offset[TDM_SLOTS] = { 0, 4, 8, 12 };
 +
  struct sm8250_snd_data {
  	bool stream_prepared[AFE_PORT_MAX];
  	struct snd_soc_card *card;
-@@ -39,10 +67,28 @@
+@@ -39,10 +72,28 @@
  					SNDRV_PCM_HW_PARAM_RATE);
  	struct snd_interval *channels = hw_param_interval(params,
  					SNDRV_PCM_HW_PARAM_CHANNELS);
@@ -56,9 +61,9 @@
 +	case SECONDARY_TDM_RX_0:
 +	case SECONDARY_TDM_TX_0:
 +		/*
-+		 * Pin the wire format. cs35l41 takes its ASP slot width from
-+		 * params_width(), so letting a 24 bit stream reach the backend
-+		 * would put the amp back out of step with the 16 bit slots.
++		 * Pin the wire format so the amp slot scaling stays a known
++		 * factor of two. A 24 bit stream would divide 32 unevenly and
++		 * silently misplace every amp.
 +		 */
 +		fmt = hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT);
 +		snd_mask_none(fmt);
@@ -71,7 +76,7 @@
  	return 0;
  }
  
-@@ -71,6 +117,22 @@
+@@ -71,6 +122,22 @@
  		snd_soc_dai_set_fmt(cpu_dai, fmt);
  		snd_soc_dai_set_fmt(codec_dai, codec_dai_fmt);
  		break;
@@ -94,7 +99,7 @@
  	default:
  		break;
  	}
-@@ -89,12 +151,110 @@
+@@ -89,12 +156,124 @@
  	sdw_release_stream(sruntime);
  }
  
@@ -104,16 +109,22 @@
 +{
 +	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 +	unsigned int channels = params_channels(params);
-+	unsigned int bclk, mask;
++	unsigned int width = params_width(params);
++	unsigned int bclk, mask, per_slot;
 +	struct snd_soc_dai *cdai;
 +	int ret, j;
 +
 +	if (!channels || channels > TDM_SLOTS)
 +		return -EINVAL;
 +
-+	/* The fixup above pins this, so a mismatch here means it did not run. */
-+	if (params_width(params) != TDM_SLOT_WIDTH)
++	/*
++	 * The fixup pins the backend to S16_LE, so this is a clean factor of
++	 * two. Guard it anyway: a sample width that does not divide the slot
++	 * width would silently misplace every amp.
++	 */
++	if (!width || TDM_SLOT_WIDTH % width)
 +		return -EINVAL;
++	per_slot = TDM_SLOT_WIDTH / width;
 +
 +	mask = GENMASK(channels - 1, 0);
 +	bclk = TDM_SLOTS * TDM_SLOT_WIDTH * params_rate(params);
@@ -150,13 +161,21 @@
 +	if (ret)
 +		return ret;
 +
-+	/*
-+	 * One amp per slot, in the order the codecs are listed in the dai-link.
-+	 * cs35l41 has no set_tdm_slot op, so its slot is chosen through
-+	 * set_channel_map, and it wants a slot index rather than a byte offset.
-+	 */
 +	for_each_rtd_codec_dais(rtd, j, cdai) {
-+		unsigned int slot = j;
++		/*
++		 * Four amps, a stereo stream, and only `channels` slots carry
++		 * anything, so the two speaker pairs each take the same two
++		 * channels: amps 0 and 2 get channel 0, amps 1 and 3 get
++		 * channel 1. Mapping amp N to slot N instead parks half the
++		 * amps on slots nothing was written to, and on this tablet both
++		 * of the amps that did get audio sit at the same end, so it
++		 * plays out of one side only.
++		 *
++		 * The result is then scaled into the amp's own slot width, per
++		 * the TDM_SLOT_WIDTH comment. cs35l41 has no set_tdm_slot op, so
++		 * this goes in through set_channel_map.
++		 */
++		unsigned int slot = (j % channels) * per_slot;
 +
 +		/*
 +		 * cs35l41 has TWO clock entry points and needs both. The
@@ -205,7 +224,7 @@
  
  	return qcom_snd_sdw_hw_params(substream, params, &pdata->sruntime[cpu_dai->id]);
  }
-@@ -173,6 +333,7 @@
+@@ -173,6 +352,7 @@
  }
  
  static const struct of_device_id snd_sm8250_dt_match[] = {

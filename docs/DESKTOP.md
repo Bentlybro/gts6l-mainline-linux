@@ -351,7 +351,20 @@ decode the evdev bitmaps rather than guessing:
 | `event2` | `gpio-keys` | 115 | `KEY_VOLUMEUP` |
 
 Volume **down** sits on the PON block next to the power key; volume **up** is a
-separate GPIO. Both PON keys are armed wake sources — see [SLEEP.md](SLEEP.md).
+separate GPIO. Both PON keys are armed wake sources - see [SLEEP.md](SLEEP.md).
+
+Volume up is on **pm8150L `gpio12`**, active low with a pull up, and it took a
+second pass to get right. It was inherited from the Surface Duo as
+`&pm8150_gpios 6` - wrong PMIC and wrong pin - so the button emitted nothing at
+all. That presents as a desktop problem, especially when volume *down* and the
+power key both work, and it is not one: a 60 second evdev capture on `event2`
+recorded nothing while the button was pressed. Samsung's DTBO overlay has the
+real pin, which is the fourth time this device has hidden the truth there after
+Bluetooth, the codec identity and the TDM timing.
+
+The cell is 1-based. qcom's spmi-gpio `of_xlate` subtracts
+`PMIC_GPIO_PHYSICAL_OFFSET`, so `<&pm8150l_gpios 12 ...>` means the pin named
+gpio12, not the thirteenth line.
 
 `tools/tabs6-powerkeyd.py` owns them:
 
