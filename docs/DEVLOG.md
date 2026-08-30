@@ -952,3 +952,64 @@ over, which `fw_devlink=on` might fix but which cannot be tested safely from a
 remote shell: `bootctl` will not manage an ESP that is loop mounted over a
 partition, so `LoaderEntryOneShot` does not take), and about 9s of Plasma
 starting. None of those has an easy fix left in it.
+
+## Audio, and then the microphone
+
+Audio depended on the ADSP, and the ADSP would not boot. `qcom_scm_pas_init_image()`
+succeeded and the very next call, `qcom_scm_pas_mem_setup()`, refused: TrustZone
+authenticated Samsung's own signed image and then would not let us place it. The
+size handed to that call is the image's loadable span read out of the ELF, 39 MB,
+and TZ wants a region at least that big which also overlaps nothing it owns. The
+canonical `adsp_mem` fails both at once, being 26 MB and unable to grow without
+running into the live modem, so no size works at that address and every attempt
+looked identical. `mpss_mem` is 160 MB for exactly the same reason, a rule I had
+already applied once without writing down.
+
+Both refusals arrive as `-22` because TZ answers `0xffcfffba` and
+`qcom_scm_remap_error()` flattens every code it does not know. Making the SCM
+calls from a throwaway module, which is possible because they are all
+`EXPORT_SYMBOL_GPL`, turned a 40 minute build per hypothesis into a one second
+insmod and produced the answer in about twenty of them.
+
+On top of that: an `apr` node (sm8150.dtsi has none, so it is the sdm845 shape),
+four CS35L41 amps on Secondary TDM, and a Secondary TDM case added to the generic
+sm8250 machine driver. No mainline SM8150 board has audio at all, so this is new
+work rather than a port. Four failures each named something other than themselves:
+identical codecs colliding on control names, `Enable(1) failed: -110` meaning an
+unconfigured clock rather than a dead amp, an AFE error that wanted a slot *map*
+as well as slot geometry, and loud crunching that was a units mismatch, because
+cs35l41 derives its ASP slot width from `params_width()` and so the sample width
+and the slot width have to be the same number.
+
+### The microphone
+
+The mics are on a **CS48L33** on SPI. I recorded that this part had no mainline
+driver, which was true of 6.12 and incomplete: 6.18 gained one for the **CS48L32**,
+its sibling, and Samsung's own firmware for this device is named
+`cs48l32-dsp1-ctrl.wmfw`. The driver backports to 6.12 untouched, and rejected the
+part with `Unknown device ID: 0x48a33` against an expected `0x48a32`. That is the
+good kind of failure: it means reset, both rails, the DCVDD gpio gate, the bus and
+the chip select were already right, and the parts differ only by the part number in
+the low byte. Accepting the ID is a two line patch and the chip then registers its
+full DAI set.
+
+Getting it to actually record took three more things. The path is Quinary MI2S,
+not the Secondary TDM the speakers use, and it needs the codec's own clock tree
+started: FLL1 locked to the ASP bit clock at 49.152 MHz and SYSCLK_1 from FLL1 at
+98.304 MHz. Then the first capture ran clean and returned **digital silence**, all
+288000 samples exactly zero, which is what a working link carrying nothing looks
+like: the codec powers up with its analogue inputs disconnected from the ASP
+transmitter, and all four MICBIAS widgets sat unreferenced at `Off, in 0 out 0`
+because DAPM will not power a supply nothing declares a dependency on. And finally
+the analogue PGA starts at **0 dB, its minimum**, with 31 dB available, so the mic
+worked with no gain at all.
+
+Two corrections worth keeping. I twice called this working on evidence that did
+not support it, once on a 3 second capture whose peak was a startup transient; a
+40 second capture with someone talking throughout came back flat for 39 of 40
+seconds. The test that settles it is whether per-second RMS tracks speech starting
+and stopping, and it should have been the first test rather than the third.
+
+Still open: the mic records from ALSA but is **not** a PipeWire source, because
+adding a UCM capture device breaks the whole card and drops the sink to a Dummy
+Output. Not a parse error, not the shared PCM, not the enable sequence.
