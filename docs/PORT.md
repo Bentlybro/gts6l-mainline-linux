@@ -70,7 +70,8 @@ DSC (from the device's downstream panel node).
 | S Pen (Wacom W9021) | ⬜ | wacom@0x56 on i2c14, irq gpio 5, pdct 53, fwe 11 |
 | Bluetooth (WCN3990 UART) | ✅ | `hci_qca` over `serial@c8c000` (QUP2 SE3), a UART personality mainline never declared. Needs an alias for the port index, the device's own crbtfw21/crnv21 under the name the driver derives, and a BD address from `/efs/bluetooth/bt_addr` — [`BLUETOOTH.md`](BLUETOOTH.md) |
 | Audio (speakers) | ✅ | ADSP + APR + Secondary TDM to four `cirrus,cs35l41` amps (I2C 0x40-0x43), ALSA UCM profile for the desktop sink — [`AUDIO.md`](AUDIO.md) |
-| Audio (headphones) | ⬜ | `cirrus,cs48l33` has no mainline driver |
+| Mic codec (CS48L33) | ✅ | probes and registers its DAIs. 6.18 gained a CS48L32 driver, backported to 6.12; the CS48L33 differs only by the part number in DEVID (0x48a33 vs 0x48a32) — [`AUDIO.md`](AUDIO.md) |
+| Audio (capture / headphones) | 🚧 | codec is up, the path is not: needs QUINARY_MI2S_TX, a capture dai-link to cs48l32-asp1, codec FLL/SYSCLK setup and UCM — [`AUDIO.md`](AUDIO.md) |
 | Hardware buttons | ✅ | power = PMIC PON KPDPWR, volume down = PON RESIN, volume up = **`&pm8150l_gpios 12`** active low with a pull up. The inherited Surface Duo `&pm8150_gpios 6` produced no evdev events at all, which reads as a desktop bug and is not one. The cell is 1-based: spmi-gpio `of_xlate` subtracts `PMIC_GPIO_PHYSICAL_OFFSET` — [`DESKTOP.md`](DESKTOP.md) |
 | Boot time | ✅ | ~38 s cold power-on to desktop. Controllable time 56.6 s → 23.9 s, `graphical.target` 46.95 s → 17.44 s. Two of our own units had ordering bugs and the console was rendering 561 debug prints per boot into an unaccelerated 2560x1600 framebuffer — see the boot section of [`DEVLOG.md`](DEVLOG.md) |
 

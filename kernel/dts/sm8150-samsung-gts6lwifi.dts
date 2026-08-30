@@ -138,6 +138,30 @@
 	};
 
 	/*
+	 * Rails for the microphone codec. Samsung models the 1.8 V one as an
+	 * always-on fixed supply, and gates DCVDD from tlmm gpio60 with a 10 ms
+	 * settle before the part is talked to.
+	 */
+	vreg_cdc_1p8: regulator-cdc-1p8 {
+		compatible = "regulator-fixed";
+		regulator-name = "CDC_VDD_1P8";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	vreg_cdc_dcvdd: regulator-cdc-dcvdd {
+		compatible = "regulator-fixed";
+		regulator-name = "CDC_DCVDD_1P2";
+		regulator-min-microvolt = <1200000>;
+		regulator-max-microvolt = <1200000>;
+		gpio = <&tlmm 60 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <10000>;
+	};
+
+	/*
 	 * Volume up. The Surface Duo had this on pm8150 gpio6 and it was
 	 * inherited unchanged, so the button emitted nothing at all: no events
 	 * on the gpio-keys evdev node. That looks exactly like a desktop
@@ -738,6 +762,14 @@
 	 */
 	gpio-reserved-ranges = <0 4>;
 
+	cs48l33_irq_default: cs48l33-irq-state {
+		pins = "gpio12";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+		input-enable;
+	};
+
 	sec_tdm_active: sec-tdm-active-state {
 		sck-ws-pins {
 			pins = "gpio126", "gpio127";
@@ -1211,6 +1243,55 @@
 		input-enable;
 		bias-pull-up;
 		power-source = <0>;
+	};
+};
+
+/*
+ * Microphones. They are not on the SoC and not on the speaker amps: they hang
+ * off a Cirrus CS48L33 on QUP0 SE3 SPI, which carries MICBIAS and the analogue
+ * inputs, so nothing can capture until this part is up.
+ *
+ * Declared as cs48l32 on purpose. Mainline has no cs48l33 driver; 6.18 gained
+ * one for the CS48L32, its sibling in the Tacna family, and it is backported
+ * here. Samsung's own firmware for this device is named cs48l32-dsp1-ctrl.wmfw,
+ * which is the reason to think the parts are close. The driver validates the
+ * silicon ID and refuses anything it does not recognise, printing what it
+ * actually found, so this either binds or tells us exactly which part this is.
+ *
+ * Supply names are the mainline ones (vdd-a/vdd-io/vdd-cp/vdd-d), NOT Samsung's
+ * VDD_A/VDD_IO1/VDD1_CP/VDD_D. Using theirs verbatim fails probe.
+ */
+&spi3 {
+	status = "okay";
+
+	audio-codec@0 {
+		compatible = "cirrus,cs48l33";
+		reg = <0>;
+		spi-max-frequency = <25000000>;
+		#sound-dai-cells = <1>;
+
+		interrupt-parent = <&tlmm>;
+		interrupts = <12 IRQ_TYPE_LEVEL_LOW>;
+
+		/*
+		 * The IRQ line is open drain and needs the pull up, or it floats
+		 * and a level-low interrupt reads as permanently asserted: the
+		 * handler finds nothing to service, returns IRQ_NONE, and after
+		 * 100000 of those the kernel prints "irq 179: nobody cared" and
+		 * disables the line.
+		 */
+		pinctrl-names = "default";
+		pinctrl-0 = <&cs48l33_irq_default>;
+
+		reset-gpios = <&pm8150l_gpios 2 GPIO_ACTIVE_HIGH>;
+
+		vdd-a-supply = <&vreg_cdc_1p8>;
+		vdd-io-supply = <&vreg_cdc_1p8>;
+		vdd-cp-supply = <&vreg_cdc_1p8>;
+		vdd-d-supply = <&vreg_cdc_dcvdd>;
+
+		/* all four analogue inputs differential, which is the default */
+		cirrus,in-type = <0 0 0 0>;
 	};
 };
 

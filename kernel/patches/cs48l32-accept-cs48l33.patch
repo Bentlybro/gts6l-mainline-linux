@@ -1,0 +1,42 @@
+--- a/sound/soc/codecs/cs48l32.h
++++ b/sound/soc/codecs/cs48l32.h
+@@ -14,6 +14,15 @@
+ 
+ #define CS48L32_SILICON_ID	0x48a32
+ 
++/*
++ * The Galaxy Tab S6 fits a CS48L33, which is the same Tacna family part with a
++ * different part number in the low byte of DEVID. The stock driver rejects it
++ * with "Unknown device ID: 0x48a33" before touching anything else. Samsung's own
++ * firmware for this device is named cs48l32-dsp1-ctrl.wmfw, which is the reason
++ * to believe the two are register compatible.
++ */
++#define CS48L33_SILICON_ID	0x48a33
++
+ #define CS48L32_32K_MCLK1		0
+ 
+ #define CS48L32_SFT_RESET_MAGIC		0x5a000000
+--- a/sound/soc/codecs/cs48l32.c
++++ b/sound/soc/codecs/cs48l32.c
+@@ -3968,6 +3968,7 @@
+ 
+ 	switch (hwid) {
+ 	case CS48L32_SILICON_ID:
++	case CS48L33_SILICON_ID:
+ 		break;
+ 	default:
+ 		ret = -ENODEV;
+@@ -4048,11 +4049,13 @@
+ 
+ static const struct of_device_id cs48l32_of_match[] = {
+ 	{ .compatible = "cirrus,cs48l32", },
++	{ .compatible = "cirrus,cs48l33", },
+ 	{},
+ };
+ 
+ static const struct spi_device_id cs48l32_spi_ids[] = {
+ 	{ "cs48l32", },
++	{ "cs48l33", },
+ 	{ },
+ };
+ MODULE_DEVICE_TABLE(spi, cs48l32_spi_ids);

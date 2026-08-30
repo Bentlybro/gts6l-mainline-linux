@@ -11,7 +11,8 @@ part: every one of them looked like a dead end and none of them was.
 | APR + q6core / q6afe / q6asm / q6adm | **works** |
 | Secondary TDM back end, CS35L41 amps, sound card | **works** |
 | Desktop sink (PipeWire via ALSA UCM) | **works** |
-| headphone jack (CS48L33) | not reachable upstream today, see section 6 |
+| Mic codec (CS48L33) probes | **works** (capture path not wired yet, section 6) |
+| headphone jack (CS48L33) | needs the capture/playback path below |
 
 ---
 
@@ -327,11 +328,75 @@ unit and does not run. That change has a real failure mode - if the PD never
 reports ready, audio does not come up at all - so it wants testing, not a
 hopeful commit.
 
-## 6. The headphone jack
+## 6. Microphones and the headphone jack: the CS48L33
 
-The `cs48l33` has **no mainline driver**. `sound/soc/codecs` has the `madera`
-family (cs47l35/85/90/92) and nothing for this part, so the jack is not reachable
-upstream today without writing one.
+Both hang off a **Cirrus CS48L33** on QUP0 SE3 SPI (`spi@88c000`), which carries
+MICBIAS and the analogue inputs. Nothing can capture until that part is up.
+
+I first recorded that this chip has no mainline driver. That was true of 6.12 and
+**incomplete**: 6.18 gained a driver for the **CS48L32**, its sibling in the
+Cirrus Tacna family, and Samsung's own firmware for this device is named
+`cs48l32-dsp1-ctrl.wmfw`. Those two facts together were enough to try it.
+
+### It works
+
+The driver backports cleanly to 6.12: three source files and three headers, all
+of them part of the same upstream submission rather than infrastructure it
+depends on, so nothing else had to come with it. One warning, because
+`regmap_multi_reg_read()` gained a `const` on its second argument after 6.12.
+
+The stock driver then rejected the part:
+
+```
+cs48l32 spi0.0: error -ENODEV: Unknown device ID: 0x48a33
+```
+
+which is a good failure, because it means every other thing was already right:
+reset, both rails, the DCVDD gpio gate, the bus, the chip select. `CS48L32_SILICON_ID`
+is `0x48a32`, so the parts differ by the part number in the low byte, exactly as the
+driver's own `"CS48L%x"` print implies. Accepting `0x48a33` is
+[`cs48l32-accept-cs48l33.patch`](../kernel/patches/cs48l32-accept-cs48l33.patch),
+and the chip then comes up properly:
+
+```
+cs48l32 spi0.0: CS48L33 revision A0 OTP2
+```
+
+registering `cs48l32-asp1`, `cs48l32-asp2`, and the trace and voicectrl DAIs. So
+the CS48L33 is register compatible with the CS48L32 driver.
+
+### Board facts, all from the overlay
+
+* SPI: **QUP0 SE3**, `spi@88c000`, chip select 0, 25 MHz (the binding's maximum)
+* reset: **pm8150L gpio2**, active high
+* IRQ: **tlmm gpio12**, level low
+* `vdd-a` / `vdd-io` / `vdd-cp`: a fixed always-on 1.8 V rail
+* `vdd-d`: 1.2 V **gated by tlmm gpio60** with a 10 ms startup delay
+
+Two traps in there. Samsung names the supplies `VDD_A-supply`, `VDD_IO1-supply`,
+`VDD1_CP-supply` and `VDD_D-supply`; mainline wants `vdd-a`, `vdd-io`, `vdd-cp`
+and `vdd-d`, and copying Samsung's verbatim fails probe with nothing useful to
+point at. And the IRQ pin needs `bias-pull-up` with `input-enable`: it is open
+drain, so without the pull up it floats, a level-low interrupt reads as
+permanently asserted, and after 100000 unhandled interrupts the kernel prints
+`irq 179: nobody cared` and disables the line.
+
+### What is left before a microphone actually records
+
+The codec is up; the audio path to it is not. From the sound card node in
+Samsung's overlay (`qcom,sm8150-asoc-snd-cooke`):
+
+* the codec's **ASP1 connects to Quinary MI2S** on the SoC, not to the Secondary
+  TDM bus the speakers use
+* `cirrus,sysclk` is **98.304 MHz** and `cirrus,fll1-refclk-bclk` sets **FLL1 to
+  49.152 MHz derived from the ASP bit clock**, so the machine driver has to set
+  up the codec's FLL and SYSCLK, which is more than the speakers needed
+* `qcom,audio-routing` names the speakers FL, FR, RL and RR, which confirms the
+  quad layout the `cirrus,mfd-suffix` values implied
+
+So the remaining work is a `QUINARY_MI2S_TX` back end, a capture dai-link from it
+to `cs48l32-asp1`, machine driver support for that port including the codec FLL
+and SYSCLK setup, and a UCM capture device.
 
 ## 7. Firmware
 
