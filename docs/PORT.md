@@ -71,6 +71,8 @@ DSC (from the device's downstream panel node).
 | Bluetooth (WCN3990 UART) | ✅ | `hci_qca` over `serial@c8c000` (QUP2 SE3), a UART personality mainline never declared. Needs an alias for the port index, the device's own crbtfw21/crnv21 under the name the driver derives, and a BD address from `/efs/bluetooth/bt_addr` — [`BLUETOOTH.md`](BLUETOOTH.md) |
 | Audio (speakers) | ✅ | ADSP + APR + Secondary TDM to four `cirrus,cs35l41` amps (I2C 0x40-0x43), ALSA UCM profile for the desktop sink — [`AUDIO.md`](AUDIO.md) |
 | Audio (headphones) | ⬜ | `cirrus,cs48l33` has no mainline driver |
+| Hardware buttons | ✅ | power = PMIC PON KPDPWR, volume down = PON RESIN, volume up = **`&pm8150l_gpios 12`** active low with a pull up. The inherited Surface Duo `&pm8150_gpios 6` produced no evdev events at all, which reads as a desktop bug and is not one. The cell is 1-based: spmi-gpio `of_xlate` subtracts `PMIC_GPIO_PHYSICAL_OFFSET` — [`DESKTOP.md`](DESKTOP.md) |
+| Boot time | ✅ | ~38 s cold power-on to desktop. Controllable time 56.6 s → 23.9 s, `graphical.target` 46.95 s → 17.44 s. Two of our own units had ordering bugs and the console was rendering 561 debug prints per boot into an unaccelerated 2560x1600 framebuffer — see the boot section of [`DEVLOG.md`](DEVLOG.md) |
 
 Current state: the tablet is a self-sufficient machine. It boots from its own internal
 storage into Fedora 44 + KDE Plasma with working touch, GPU acceleration and its own

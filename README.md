@@ -49,7 +49,7 @@ SoC brought up.
 | Subsystem | Status | Notes |
 |---|---|---|
 | Boot handoff (Aloha UEFI -> systemd-boot on cache ESP) | working | Volume-Down = fastboot; iterate by re-flashing the cache ESP |
-| UFS internal storage | working | needed a `BRANCH_HALT_SKIP` fix on 18 UFS/USB clocks (Aloha TZ lies about halt status) |
+| UFS internal storage | working | needed a `BRANCH_HALT_SKIP` fix on the UFS and USB branch clocks (Aloha TZ lies about halt status) |
 | Display (KDE Plasma visible) | working | `simpledrm` on the untouched bootloader framebuffer @2560x1600; **do not** enable the DSI/DPU pipe |
 | Multitouch | working | STM `fts1ba90a` (Samsung SEC-TS protocol), GPI-DMA on QUP2 |
 | GPU acceleration | working | Adreno 640 render-only via `msm`/freedreno, Mesa kmsro pairs it with simpledrm; Samsung-signed zap shader |
@@ -66,6 +66,8 @@ SoC brought up.
 | Surviving distro upgrades | working | RPM silently reverts the lock-screen and keyboard customisations (package-owned, not `%config`, no `.rpmsave`). `tabs6-desktop-patches.service` re-applies them every boot |
 | Bluetooth (WCN3990 UART) | working | `hci_qca` on a UART mainline never declared (0xc8c000 is only i2c13/spi13 upstream). Firmware and the BD address both come off the device itself - see [`docs/BLUETOOTH.md`](docs/BLUETOOTH.md) |
 | Audio | works | speakers, via the ADSP + APR + Secondary TDM to four Cirrus CS35L41 amps, with an ALSA UCM profile so the desktop gets a real sink. Headphone jack needs a CS48L33 driver that does not exist upstream - see [`docs/AUDIO.md`](docs/AUDIO.md) |
+| Hardware buttons | working | power and volume down are PMIC PON inputs; volume up is **pm8150L `gpio12`**, not the Surface Duo's `pm8150_gpios 6` that was inherited and emitted nothing at all - see [`docs/DESKTOP.md`](docs/DESKTOP.md) |
+| Boot time | ~38 s cold power-on to desktop | 23.9 s of that is controllable (was 56.6 s); the rest is Samsung's bootloader, which varies 8-23 s boot to boot. See the boot section of [`docs/DEVLOG.md`](docs/DEVLOG.md) |
 | S Pen | not done | see [`docs/PORT.md`](docs/PORT.md) |
 
 Read [`docs/PORT.md`](docs/PORT.md) for the full hardware map and
