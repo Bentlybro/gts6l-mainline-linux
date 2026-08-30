@@ -872,3 +872,83 @@ the clipboard back to a file, crop the panel out of a screenshot to see the icon
 with your own eyes, grep the journal from a timestamp taken *before* the action
 rather than a relative window that overlaps the failure you are comparing against.
 Four separate times that turned a confident "verified" into "actually, no".
+
+## Boot time: 56.6s of controllable time down to 23.9s
+
+Boot felt slow, so it got measured properly. The first lesson is that
+`systemd-analyze blame` is the wrong tool: it ranks units by how long they took,
+not by what the boot actually waited on. `critical-chain` is the one that
+matters, and it pointed somewhere absurd:
+
+```
+graphical.target @46.953s
+└─multi-user.target @46.952s
+  └─getty.target @46.951s
+    └─serial-getty@ttyGS0.service @49.231s
+      └─dev-ttyGS0.device @47.129s
+```
+
+The graphical desktop was being held open by the USB gadget serial console.
+
+**Two ordering bugs, both ours.** `tabs6-wifi.service` carried
+`Before=NetworkManager.service`, and it is a oneshot that boots the modem, waits
+for the WLAN protection domain and polls for phy0. So NetworkManager,
+`remote-fs.target`, `systemd-user-sessions` and finally the login manager all
+queued behind Wi-Fi associating. Nothing about drawing a login screen needs that.
+Dropping the line moved plasmalogin from 24.45s to 18.72s, and Wi-Fi still comes
+up at the full 866.7 MBit/s because NetworkManager has always coped with
+interfaces that appear after it starts.
+
+`tabs6-usb-gadget.service` had both `After=multi-user.target` and
+`WantedBy=multi-user.target`: a unit ordered after the very target that pulls it
+in. systemd cannot run it as part of that target, so it landed 49 seconds into
+boot, `dev-ttyGS0.device` did not exist, `serial-getty@ttyGS0` failed its
+dependency outright, and `getty.target` sat holding `graphical.target` behind it.
+Reordered to `After=sysinit.target sys-kernel-config.mount`, it finishes at
+18.75s, which also gets SSH over USB up half a minute sooner.
+
+That is the third instance of the same mistake in this port, so it is worth
+stating flatly: **if a unit is `WantedBy=X`, it must not be `After=X`.**
+
+**The console was the kernel's biggest single cost.** The cmdline carried
+`console=tty0 loglevel=7`, and the tree was full of bring-up instrumentation:
+561 of 1425 kernel messages per boot were `TABS6_*` prints, every one rendered as
+text into an unaccelerated 2560x1600 framebuffer. `loglevel=4` keeps them in
+`dmesg` and off the panel, and the kernel phase dropped 36%, from 2.12s to 1.36s.
+
+**Two things that looked obvious and were worth nothing.** Disabling the services
+a tablet has no use for (abrt, avahi, cups, smartd, pcscd, mdmonitor, nfs,
+ModemManager, sssd, and friends) moved `graphical.target` by 0.00s. They were
+never on the critical path, which `critical-chain` had already said. And later
+deleting the 554 debug prints from the source entirely also bought no time at
+all, because `loglevel=4` had already stopped the expensive part; the cost was
+drawing them, not generating them. Both changes were kept as tidiness. Neither is
+a speedup.
+
+**udev coldplug is inherent.** 5.5s looked attackable and the obvious theory was
+blkid across 31 UFS partitions, but blkid on all of them totals 0.58s.
+Re-triggering coldplug on a fully warm system with every module already loaded
+still takes 5.05s across **855 udev devices**. It is CPU-bound rule evaluation
+with no ordering bug in it.
+
+**Where it landed.** The firmware phase is excluded because it varies between
+about 8 and 23 seconds boot to boot; it is Samsung's XBL/ABL plus the Project Mu
+UEFI and is invisible from Linux. (`systemd-analyze` reporting it as 8.43s then
+22.71s then 9.88s across consecutive boots is not a bug in systemd: the raw EFI
+`LoaderTime*` variables agree, and the loader figure matches its configured
+timeout exactly.)
+
+| | before | after |
+| --- | --- | --- |
+| loader | 5.16s | **1.16s** |
+| kernel | 2.19s | **1.36s** |
+| userspace | 49.26s | **21.41s** |
+| controllable total | **56.6s** | **23.9s** |
+| `graphical.target` | 46.95s | **17.44s** |
+
+Roughly 38s from cold power-on to a usable desktop. What is left is 5s of udev,
+2.6s of deferred probe retries (dwc3 asking for its PHY and getting -517 over and
+over, which `fw_devlink=on` might fix but which cannot be tested safely from a
+remote shell: `bootctl` will not manage an ESP that is loop mounted over a
+partition, so `LoaderEntryOneShot` does not take), and about 9s of Plasma
+starting. None of those has an easy fix left in it.
