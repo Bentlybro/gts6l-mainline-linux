@@ -1,0 +1,10 @@
+[Unit]
+Description=Tab S6 USB gadget (RNDIS network + ACM serial, S20 recipe)
+After=sysinit.target sys-kernel-config.mount
+Requires=sys-kernel-config.mount
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/tabs6-usb-gadget.sh
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target

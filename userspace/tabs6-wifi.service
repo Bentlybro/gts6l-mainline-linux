@@ -1,0 +1,25 @@
+[Unit]
+Description=Tab S6 Wi-Fi bring-up (WCN3990 via modem WLAN PD)
+Documentation=file:///root/WIFI-NOTES.md
+After=network-pre.target systemd-remount-fs.service
+Wants=NetworkManager.service
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# The WCN3990's firmware runs on the modem, so the modem must boot first and be
+# served its EFS (rmtfs) and file requests (tqftpserv) before ath10k can talk to
+# the wlfw QMI service.
+ExecStartPre=/sbin/modprobe qcom_q6v5_pas
+ExecStartPre=/sbin/modprobe qrtr-smd
+ExecStartPre=/sbin/modprobe rmtfs_mem
+ExecStartPre=/bin/sh -c 'pgrep -x rmtfs     >/dev/null || (/usr/bin/rmtfs -P -s        >/var/log/rmtfs.log 2>&1 &) ; sleep 1'
+ExecStartPre=/bin/sh -c 'pgrep -x tqftpserv >/dev/null || (/usr/local/bin/tqftpserv     >/var/log/tqftpserv.log 2>&1 &) ; sleep 1'
+ExecStartPre=/sbin/modprobe ath10k_snoc
+ExecStart=/bin/sh -c 'echo start > /sys/class/remoteproc/remoteproc0/state'
+# Give the modem time to boot its WLAN protection domain and hand ath10k FW_READY
+ExecStartPost=/bin/sh -c 'for i in $(seq 1 40); do [ -d /sys/class/ieee80211/phy0 ] && exit 0; sleep 1; done; exit 0'
+
+[Install]
+WantedBy=multi-user.target
