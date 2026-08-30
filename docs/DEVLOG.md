@@ -224,7 +224,7 @@ halt-status **readback** that returns the wrong value under the Samsung/TrustZon
 access-domain firmware - the same family of quirk as the SPMI fault and the GPIO0 hang.
 
 This is precisely what `BRANCH_HALT_SKIP` exists for: it tells the clock framework to trust
-the enable and skip polling the lying bit. We set it on the 18 UFS and USB branch clocks in
+the enable and skip polling the lying bit. We set it on the UFS and USB branch clocks in
 `gcc-sm8150.c`. On the next boot the UFS linked, queried the device, and read the full
 Samsung partition table - a Samsung 128 GB UFS 2.1 part, all LUNs present. The proof that
 this was a real fix and not masking a dead clock: if the AXI clock were genuinely off, the

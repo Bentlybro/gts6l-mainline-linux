@@ -89,7 +89,10 @@ Edit `drivers/clk/qcom/gcc-sm8150.c`. For each affected branch clock, set:
 .halt_check = BRANCH_HALT_SKIP,
 ```
 
-Apply it to the **18 UFS + USB branch clocks** below. (USB is included because it sits on the
+Apply it to the **UFS and USB branch clocks listed below**. (This document used to
+say 18; the list is 13, and the tree carries 36 `BRANCH_HALT_SKIP` sites in total
+including ones that were already upstream. The count was never verified, so it is
+gone rather than replaced with another guess.) (USB is included because it sits on the
 same PHY/clock island and exhibits the same readback quirk; skipping the poll there avoids the
 identical hang once USB is enabled.)
 
@@ -139,7 +142,7 @@ static struct clk_branch gcc_ufs_phy_axi_clk = {
 };
 ```
 
-Repeat the `.halt_check = BRANCH_HALT_SKIP,` change for each of the 18 clocks listed above. No
+Repeat the `.halt_check = BRANCH_HALT_SKIP,` change for each of the clocks listed above. No
 other logic changes are required — `BRANCH_HALT_SKIP` is a first-class value in the branch
 `halt_check` enum and is handled by `clk_branch_wait()` directly.
 

@@ -89,7 +89,7 @@ AMOLED a black frame is pixels not emitting rather than a backlight shining thro
 the screen does effectively blank and the power cost is small. The other is **USB
 SuperSpeed**, which still negotiates only high speed.
 
-S Pen, Bluetooth and audio are not started rather than blocked — nothing found so far
+S Pen is not started rather than blocked — nothing found so far
 suggests they need anything the other subsystems did not.
 
 ## Lessons carried from the S20 (`z3s`) project (all held true here)
