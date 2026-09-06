@@ -100,8 +100,17 @@ never poke that state file.
 ## Dev tooling on the tablet
 
 Present: podman, toolbox, distrobox, git, tmux, htop, VS Code (Microsoft's
-aarch64 repo). Bluetooth keyboard and mouse work; the on-screen keyboard has
-real modifier keys.
+aarch64 repo), Tailscale. Bluetooth keyboard and mouse work; the on-screen
+keyboard has real modifier keys.
+
+Tailscale needed two workarounds because of kernel config, not Tailscale:
+this 6.12 config has no nf_tables and no policy routing. `iptables-legacy`
+with `alternatives --set iptables /usr/sbin/iptables-legacy` gives tailscaled
+a working netfilter (the legacy ip_tables modules are built); it then runs
+"without policy routing" (route-based fallback) and without tunneled IPv6.
+Next kernel build: `IP_ADVANCED_ROUTER`, `IP_MULTIPLE_TABLES`,
+`IPV6_MULTIPLE_TABLES`, `NF_TABLES` and the nft modules Fedora's firewalld
+expects.
 
 ## Open
 
