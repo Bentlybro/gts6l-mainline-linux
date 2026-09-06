@@ -110,7 +110,10 @@ a working netfilter (the legacy ip_tables modules are built); it then runs
 "without policy routing" (route-based fallback) and without tunneled IPv6.
 Next kernel build: `IP_ADVANCED_ROUTER`, `IP_MULTIPLE_TABLES`,
 `IPV6_MULTIPLE_TABLES`, `NF_TABLES` and the nft modules Fedora's firewalld
-expects.
+expects, plus `NETFILTER_XT_CONNMARK` (tailscale's health check complains its
+connmark rules cannot be added; connectivity and Tailscale SSH work anyway).
+Connected 2026-09-07: `tab-s6` at 100.101.157.88, direct path to peers,
+`tailscale set --ssh` on.
 
 ## Open
 
