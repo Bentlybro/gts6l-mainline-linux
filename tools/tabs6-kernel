@@ -1,0 +1,70 @@
+#!/bin/bash
+# Kernel snapshot / rollback for the Galaxy Tab S6.
+#
+#   tabs6-kernel status     what is on the ESP and which modules match
+#   tabs6-kernel snapshot   mark the CURRENT kernel+DTB+modules as LAST KNOWN GOOD
+#   tabs6-kernel rollback   put LAST KNOWN GOOD back as the default kernel
+#
+# The ESP is a 95 MB FAT on the cache partition (sda27) that only mounts via a
+# loop device (512 byte logical sectors on a 4K UFS). It holds /Image and
+# /gts6.dtb (default entry) and /Image-lastgood + /gts6-lastgood.dtb (the
+# "LAST KNOWN GOOD" entry in the systemd-boot menu, hold volume-down at boot
+# to reach the menu). Modules live in /lib/modules/6.12.0 with the snapshot in
+# /lib/modules/6.12.0-lastgood; both kernels report 6.12.0, so rollback swaps
+# the directory rather than the name.
+#
+# Always run snapshot after a kernel has proven itself across a reboot, never
+# right after installing one.
+set -eu
+ESP_DEV=/dev/sda27
+MNT=/mnt/esp
+KVER=6.12.0
+MODS=/lib/modules/$KVER
+MODS_LG=/lib/modules/$KVER-lastgood
+
+[ "$(id -u)" = 0 ] || { echo "run as root" >&2; exit 1; }
+
+LOOP=""
+cleanup() { mountpoint -q $MNT && umount $MNT; [ -n "$LOOP" ] && losetup -d "$LOOP"; }
+trap cleanup EXIT
+mkdir -p $MNT
+LOOP=$(losetup -f --show $ESP_DEV)
+mount "$LOOP" $MNT
+
+case "${1:-status}" in
+status)
+    df -h $MNT | tail -1
+    for f in Image Image-lastgood gts6.dtb gts6-lastgood.dtb; do
+        [ -f $MNT/$f ] && printf "%-18s %10d bytes  %s\n" $f "$(stat -c %s $MNT/$f)" "$(md5sum < $MNT/$f | cut -c1-12)"
+    done
+    echo "default entry: $(grep '^default' $MNT/loader/loader.conf)"
+    echo "modules: $(du -sh $MODS | cut -f1) current, $( [ -d $MODS_LG ] && du -sh $MODS_LG | cut -f1 || echo none) lastgood"
+    echo "running:  $(uname -r), booted $(cat /proc/sys/kernel/random/boot_id | cut -c1-8)"
+    ;;
+snapshot)
+    cp $MNT/Image $MNT/Image-lastgood
+    cp $MNT/gts6.dtb $MNT/gts6-lastgood.dtb
+    sync
+    rm -rf $MODS_LG
+    cp -a $MODS $MODS_LG
+    echo "snapshot taken: $(md5sum < $MNT/Image | cut -c1-12) Image, $(md5sum < $MNT/gts6.dtb | cut -c1-12) dtb, modules copied"
+    ;;
+rollback)
+    [ -f $MNT/Image-lastgood ] || { echo "no snapshot on the ESP" >&2; exit 1; }
+    cp $MNT/Image $MNT/Image-broken
+    cp $MNT/gts6.dtb $MNT/gts6-broken.dtb 2>/dev/null || true
+    cp $MNT/Image-lastgood $MNT/Image
+    cp $MNT/gts6-lastgood.dtb $MNT/gts6.dtb
+    sync
+    if [ -d $MODS_LG ]; then
+        rm -rf $MODS-broken
+        mv $MODS $MODS-broken
+        cp -a $MODS_LG $MODS
+        depmod -a $KVER
+    fi
+    echo "rolled back. The broken set is kept as Image-broken / gts6-broken.dtb / $MODS-broken. Reboot."
+    ;;
+*)
+    echo "usage: tabs6-kernel status|snapshot|rollback" >&2; exit 2
+    ;;
+esac

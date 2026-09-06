@@ -70,6 +70,7 @@ SoC brought up.
 | Boot time | ~38 s cold power-on to desktop | 23.9 s of that is controllable (was 56.6 s); the rest is Samsung's bootloader, which varies 8-23 s boot to boot. See the boot section of [`docs/DEVLOG.md`](docs/DEVLOG.md) |
 | Microphones | works (ALSA) | four-input Cirrus CS48L33 on SPI over Quinary MI2S. Records fine via `arecord`; it is **not** a PipeWire source yet, because a UCM capture device breaks the card - see [`docs/AUDIO.md`](docs/AUDIO.md) |
 | Sensors + auto-rotate | working | LSM6DSO accelerometer behind the **SLPI** sensor DSP: PAS boot, hexagonrpcd serving the registry over FastRPC, libssc + iio-sensor-proxy 3.9, and a small session daemon because KWin will not auto-rotate a simpledrm output - see [`docs/SENSORS.md`](docs/SENSORS.md) |
+| Rollback + power logging | working | LAST KNOWN GOOD boot entry with `tools/tabs6-kernel snapshot/rollback`, fuel gauge logged to the journal every 5 min and around suspend - see [`docs/DAILY_DRIVER.md`](docs/DAILY_DRIVER.md) |
 | S Pen | not done | see [`docs/PORT.md`](docs/PORT.md) |
 
 Read [`docs/PORT.md`](docs/PORT.md) for the full hardware map and

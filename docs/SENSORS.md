@@ -186,11 +186,13 @@ After recovery the DSP also tries to write registry files (`sns_reg_config`,
 `sns_tilt`, `ccd_*`); hexagonrpcd refuses ("Tried to open ... for writing")
 and nothing breaks.
 
-**Do not try to simulate a crash.** `echo stop`/`start` into
-`/sys/class/remoteproc/remoteproc0/state` returns 0 and does nothing here, and
-`echo 1 > /sys/kernel/debug/remoteproc/remoteproc0/crash` takes the watchdog
-path, after which PAS start times out (-110) and the SLPI stays offline until a
-reboot.
+**Never write to `/sys/class/remoteproc/remoteproc0/state`.** `start` on a
+running remoteproc silently bumps `rproc->power`, so `stop` becomes a refcount
+decrement that may do nothing; when it does stop the SLPI, the next `start`
+times out (`can't start rproc: -110`) and the SLPI stays offline until reboot.
+An injected debugfs crash ends the same way. Only the genuine crash-recovery
+path restarts this DSP, which is also why there is no pre-suspend stop hook:
+the resume-time crash plus the udev recovery chain is the working mechanism.
 
 ## Not done
 

@@ -1,0 +1,7 @@
+#!/bin/sh
+# One journal line with the fuel gauge state. Run by a 5 minute timer and by the
+# systemd-sleep hook (pre/post), so suspend drain and idle drain can be read
+# straight out of the journal instead of guessed.
+P=/sys/class/power_supply/sm5705-fuelgauge
+v=$(cat $P/voltage_now); c=$(cat $P/current_now)
+printf "%s cap=%s%% V=%d.%03d I=%dmA P=%dmW\n" "${1:-tick}" "$(cat $P/capacity)" $((v/1000000)) $((v%1000000/1000)) $((c/1000)) $((v/1000*c/1000/1000000))

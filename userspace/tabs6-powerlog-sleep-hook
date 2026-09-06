@@ -1,0 +1,3 @@
+#!/bin/sh
+# pre/post suspend fuel gauge line, for suspend drain
+/usr/local/bin/tabs6-powerlog "sleep-$1" | systemd-cat -t tabs6-powerlog
