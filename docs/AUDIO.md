@@ -433,12 +433,32 @@ mic works out of the box with no gain at all, roughly 20 dB above its own noise
 floor. +20 dB analogue puts the peak at 30683, half a dB from clipping, so it is
 set to +12 dB analogue and +6 dB digital.
 
-## 6b. Not working: the microphone is not a desktop source
+## 6b. The microphone as a desktop source: declared directly, not via UCM
 
-Capture works from ALSA. It does **not** appear in PipeWire, and adding a
-`SectionDevice."Mic"` to the UCM profile **breaks the whole card**: the speaker
-sink disappears and WirePlumber falls back to a Dummy Output. Reverting restores
-it, so the capture device is the cause.
+Capture works from ALSA, but adding a `SectionDevice."Mic"` to the UCM profile
+**breaks the whole card**: the speaker sink disappears and WirePlumber falls
+back to a Dummy Output. Reverting restores it, so the capture device is the
+cause.
+
+**What works (2026-09-07):** skip WirePlumber's UCM/ACP path for capture and
+declare the PCM as a PipeWire node in
+`userspace/pipewire-51-tabs6-mic.conf` (installed to
+`/etc/pipewire/pipewire.conf.d/`): `context.objects` with `factory = adapter`,
+`api.alsa.pcm.source`, `api.alsa.path = "hw:0,1"`, S16LE 48 kHz stereo. The
+source `alsa_input.tabs6.mic` then sits next to the speaker sink and nothing
+falls back to Dummy Output. Capture uses its own frontend, MultiMedia2, so it
+never shares the playback stream; the DSP route `MultiMedia2 Mixer
+QUIN_MI2S_TX` is switched on by the UCM verb EnableSequence (it is off after
+boot otherwise). Recordings through PipeWire: rms ~50 quiet room, peaks ~900,
+speech clearly tracked.
+
+**Known hiccup:** the first capture after PipeWire starts can return zero
+frames (`qcom-q6adm cmd = 0x10325 return error = 0x2`, `q6routing DSP
+returned error[2]`), and playback shows the same on its session-start probe
+(`Memory_map_regions failed`). Subsequent opens work. Looks like the DSP
+rejecting the first ADM/ASM open of a session; not resolved.
+
+### The UCM attempt, kept for the record
 
 What it is *not*, all checked:
 
