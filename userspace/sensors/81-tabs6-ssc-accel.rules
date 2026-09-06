@@ -1,0 +1,2 @@
+# Tab S6: the LSM6DSO accelerometer lives behind the SLPI (fastrpc-sdsp); upstream only tags light+compass
+SUBSYSTEM=="misc", KERNEL=="fastrpc-sdsp*", ENV{IIO_SENSOR_PROXY_TYPE}+="ssc-accel"

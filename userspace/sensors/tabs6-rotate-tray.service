@@ -1,0 +1,12 @@
+[Unit]
+Description=Auto-rotate lock toggle in the Plasma system tray
+After=plasma-plasmashell.service
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/bin/tabs6-rotate-tray.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=plasma-workspace.target

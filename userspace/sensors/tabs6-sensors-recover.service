@@ -1,0 +1,10 @@
+[Unit]
+Description=Re-discover SLPI sensors after the DSP (re)appears (Tab S6)
+# Started by udev each time /dev/fastrpc-sdsp is created, i.e. at boot and after
+# every remoteproc recovery. iio-sensor-proxy never re-discovers a sensor whose
+# QRTR node vanished, so it is restarted once hexagonrpcd has re-attached
+# (Restart=always, RestartSec=3) and served the registry again.
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c "sleep 8; systemctl try-restart iio-sensor-proxy.service"

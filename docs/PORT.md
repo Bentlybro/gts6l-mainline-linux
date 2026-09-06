@@ -67,6 +67,8 @@ DSC (from the device's downstream panel node).
 | USB host (keyboard, SSD, hub) | ✅ | `dr_mode = otg` + role switch + VBUS from the SM5705 boost; `usb-role host`. Runs at USB 2.0 only — SuperSpeed unsolved, see [`USB_HOST.md`](USB_HOST.md) |
 | USB SuperSpeed | 🚧 | host, PHY and redriver all check out; orientation exhausted. Prime suspects: the cable, then `phy-qcom-qmp-combo.c` pinning orientation to NORMAL with no Type-C port manager to correct it |
 | Charge control / charging current | ✅ | 2000 mA input / 2000 mA into the battery, maintained (the registers reset when the cable moves) by `tools/tabs6-charge.sh`. AICL walks it back on a weak supply, so overshooting is safe — [`BATTERY.md`](BATTERY.md) |
+| Sensors / auto-rotate | ✅ | accelerometer via the SLPI: third TZ region rule (must be inside the firmware zone), sdm845-style fastrpc without SMMU context banks, hexagonrpcd + libssc + iio-sensor-proxy 3.9, `tabs6-autorotate` — [`SENSORS.md`](SENSORS.md) |
+| Light sensor / gyro / magnetometer | 🚧 | mag and rotation vector discovered by libssc, no consumer; the sensor core offers no `ambient_light` — [`SENSORS.md`](SENSORS.md) |
 | S Pen (Wacom W9021) | ⬜ | wacom@0x56 on i2c14, irq gpio 5, pdct 53, fwe 11 |
 | Bluetooth (WCN3990 UART) | ✅ | `hci_qca` over `serial@c8c000` (QUP2 SE3), a UART personality mainline never declared. Needs an alias for the port index, the device's own crbtfw21/crnv21 under the name the driver derives, and a BD address from `/efs/bluetooth/bt_addr` — [`BLUETOOTH.md`](BLUETOOTH.md) |
 | Audio (speakers) | ✅ | ADSP + APR + Secondary TDM to four `cirrus,cs35l41` amps (I2C 0x40-0x43), ALSA UCM profile for the desktop sink — [`AUDIO.md`](AUDIO.md) |

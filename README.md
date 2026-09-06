@@ -34,7 +34,7 @@ is deliberately aggressive about this.
 A **daily-drivable desktop is up**, and as of 2026-08-29 it is on the network over
 its own Wi-Fi. One subsystem remains open: the **native display pipe** (and with it
 panel brightness and DPMS), which needs kernel fixes newer than the 6.12 tree in use.
-S Pen, Bluetooth and audio have not been started. The project has three layers;
+S Pen has not been started. The project has three layers;
 **layers 1 and 3 are done and layer 2 is a working mainline kernel** with most of the
 SoC brought up.
 
@@ -65,10 +65,11 @@ SoC brought up.
 | Screenshots | working | power + volume-down chord, and a button in the system tray; both copy to the clipboard and save to `~/Pictures/Screenshots` - see [`docs/DESKTOP.md`](docs/DESKTOP.md) |
 | Surviving distro upgrades | working | RPM silently reverts the lock-screen and keyboard customisations (package-owned, not `%config`, no `.rpmsave`). `tabs6-desktop-patches.service` re-applies them every boot |
 | Bluetooth (WCN3990 UART) | working | `hci_qca` on a UART mainline never declared (0xc8c000 is only i2c13/spi13 upstream). Firmware and the BD address both come off the device itself - see [`docs/BLUETOOTH.md`](docs/BLUETOOTH.md) |
-| Audio | works | speakers, via the ADSP + APR + Secondary TDM to four Cirrus CS35L41 amps, with an ALSA UCM profile so the desktop gets a real sink. Headphone jack needs a CS48L33 driver that does not exist upstream - see [`docs/AUDIO.md`](docs/AUDIO.md) |
+| Audio | works | speakers, via the ADSP + APR + Secondary TDM to four Cirrus CS35L41 amps, with an ALSA UCM profile so the desktop gets a real sink. Headphone jack not started - see [`docs/AUDIO.md`](docs/AUDIO.md) |
 | Hardware buttons | working | power and volume down are PMIC PON inputs; volume up is **pm8150L `gpio12`**, not the Surface Duo's `pm8150_gpios 6` that was inherited and emitted nothing at all - see [`docs/DESKTOP.md`](docs/DESKTOP.md) |
 | Boot time | ~38 s cold power-on to desktop | 23.9 s of that is controllable (was 56.6 s); the rest is Samsung's bootloader, which varies 8-23 s boot to boot. See the boot section of [`docs/DEVLOG.md`](docs/DEVLOG.md) |
 | Microphones | works (ALSA) | four-input Cirrus CS48L33 on SPI over Quinary MI2S. Records fine via `arecord`; it is **not** a PipeWire source yet, because a UCM capture device breaks the card - see [`docs/AUDIO.md`](docs/AUDIO.md) |
+| Sensors + auto-rotate | working | LSM6DSO accelerometer behind the **SLPI** sensor DSP: PAS boot, hexagonrpcd serving the registry over FastRPC, libssc + iio-sensor-proxy 3.9, and a small session daemon because KWin will not auto-rotate a simpledrm output - see [`docs/SENSORS.md`](docs/SENSORS.md) |
 | S Pen | not done | see [`docs/PORT.md`](docs/PORT.md) |
 
 Read [`docs/PORT.md`](docs/PORT.md) for the full hardware map and

@@ -1013,3 +1013,54 @@ and stopping, and it should have been the first test rather than the third.
 Still open: the mic records from ALSA but is **not** a PipeWire source, because
 adding a UCM capture device breaks the whole card and drops the sink to a Dummy
 Output. Not a parse error, not the shared PCM, not the enable sequence.
+
+## Sensors: the accelerometer lives behind a third DSP (2026-09-06)
+
+The desktop rotates with the tablet. Nothing sensor-like is on any HLOS bus; the
+only sensor node downstream is `qcom,msm-ssc-sensors` bound to firmware `slpi`,
+and the persist registry names the parts (LSM6DSO, AK0991x, VEML3328). So it was
+the Wi-Fi shape again: boot a DSP, then talk to it over QRTR. Four layers, and
+each broke naming something other than itself. Full write-up in
+[`SENSORS.md`](SENSORS.md).
+
+1. **SLPI boot.** 20 MB ELF32 image on `apnhlos`. First region, 0x9f800000, free
+   in both maps and satisfying both known TZ rules, was refused with the same
+   flattened -22 as the ADSP. Third rule: the region must sit *inside* the
+   firmware zone. 0x9b000000 (ADSP trimmed to its exact 39 MB, venus moved) was
+   accepted and `qrtr-lookup` grew "Snapdragon Sensor Core service".
+2. **Every FastRPC attach killed it**: `Unhandled context fault iova=0x1fffff000,
+   SID=0x5a1` then `fatal error ... sensor_process ... frpck_0_0`. `sm8150.dtsi`
+   attaches translated SMMU context banks to the sensor PD's stream IDs; the PD
+   is hypervisor-bypassed and uses physical addresses. `sdm845.dtsi`, the only
+   upstream SLPI with working sensors, has one `compute-cb` with no `iommus`, a
+   `qcom,vmids` list and a 16 MB pool assigned by hypervisor call. Copying that
+   shape: pool assigned, attach holds, zero crashes.
+3. **hexagonrpcd** ran as its own user against root-only registry copies:
+   forty "Permission denied". chmod, restart the DSP.
+4. **iio-sensor-proxy** (3.9 built with `-Dssc-support`, Fedora's 3.8 lacks it)
+   never probed the accelerometer because upstream's udev rule tags `fastrpc-*`
+   with light+compass only. One rule line: "Has accelerometer, Tilt: face-up".
+5. **KWin** reports "Auto Rotate Policy: incapable" for simpledrm (connector
+   "Unknown" is not an internal panel). `tabs6-autorotate` maps the proxy's
+   orientation onto `kscreen-doctor`. The IMU is mounted 180 degrees from what
+   iio-sensor-proxy assumes ("turn left, desktop goes right"); the map is
+   rotated in a unit drop-in.
+
+No kernel rebuild anywhere: PAS and FastRPC are modules, the rest is userspace.
+The build box was down, so both DTB changes were made by decompiling the live
+DTB on the tablet with `dtc`, patching the nodes and recompiling, after an
+unpatched round trip reproduced the original byte for byte.
+
+Afterwards, two more things. A rotation-lock toggle in the system tray
+(`tabs6-rotate-tray.py`, StatusNotifierItem over D-Bus like the screenshot
+button), because a tablet needs one. And the discovery that **the SLPI dies on
+every resume from suspend**: `PM: suspend exit` and `sensor_process ...
+frpc_dsp` in the same millisecond. remoteproc brings it back in under a second,
+but iio-sensor-proxy never re-discovers a sensor whose QRTR node vanished, so a
+udev rule on `/dev/fastrpc-sdsp` now restarts the proxy after hexagonrpcd has
+re-attached, and the daemon re-claims the accelerometer whenever the proxy
+reappears, retrying every 2 s because a fresh proxy answers "no accelerometer"
+for its first second. Net effect: about ten seconds without rotation after
+waking, then normal. Two testing traps recorded in `SENSORS.md`: sysfs
+stop/start of this remoteproc is a silent no-op, and an injected debugfs crash
+leaves the SLPI unstartable until reboot.

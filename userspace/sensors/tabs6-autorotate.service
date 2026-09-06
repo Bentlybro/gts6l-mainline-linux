@@ -1,0 +1,12 @@
+[Unit]
+Description=Screen auto-rotation from the SLPI accelerometer (Tab S6)
+PartOf=graphical-session.target
+After=plasma-kwin_wayland.service
+
+[Service]
+ExecStart=/usr/local/bin/tabs6-autorotate
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=plasma-workspace.target

@@ -100,9 +100,10 @@ All after a successful `pas_init_image`:
 
 ### The fix
 
-Four device tree lines. `adsp_mem` moves to `0x98900000` with 40 MB, which is the
-cdsp/venus/slpi block and none of those run here; venus and slpi shuffle up
-behind it; and the now unused `cdsp_mem` is parked on the old `0x8be00000`
+Four device tree lines. `adsp_mem` moves to `0x98900000`, now with exactly its
+39 MB span (it was 40 MB until the SLPI needed the megabyte back, see
+[`SENSORS.md`](SENSORS.md)); the SLPI sits directly behind it at `0x9b000000`
+and the unused venus reservation is parked at `0x9f800000`; and the now unused `cdsp_mem` is parked on the old `0x8be00000`
 carveout so that region stays out of System RAM, because Samsung's firmware still
 believes the ADSP lives there.
 

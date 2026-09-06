@@ -1,0 +1,178 @@
+#!/usr/bin/python3
+"""Screen auto-rotation for the Galaxy Tab S6 under KDE Plasma.
+
+KWin only offers auto-rotation on outputs it believes are internal panels
+(eDP/DSI). The desktop scans out through simpledrm, whose connector type is
+"Unknown", so KScreen reports "Auto Rotate Policy: incapable" no matter what
+the sensor says. This daemon does the same job from outside KWin: it claims the
+accelerometer on iio-sensor-proxy (fed by libssc from the SLPI sensor core),
+and turns the orientation it reports into a kscreen-doctor rotation call.
+
+Mapping from sensor orientation to KScreen rotation can be overridden with
+TABS6_ROTATE_MAP="normal=none,bottom-up=inverted,left-up=left,right-up=right"
+in case the IMU placement differs from what iio-sensor-proxy assumes.
+
+Touch a file at ~/.config/tabs6-autorotate.lock to freeze rotation.
+"""
+import json
+import os
+import signal
+import subprocess
+import sys
+
+import dbus
+import dbus.mainloop.glib
+from gi.repository import GLib
+
+BUS_NAME = "net.hadess.SensorProxy"
+OBJ = "/net/hadess/SensorProxy"
+IFACE = "net.hadess.SensorProxy"
+
+DEFAULT_MAP = {
+    "normal": "none",
+    "bottom-up": "inverted",
+    "left-up": "left",
+    "right-up": "right",
+}
+
+LOCK = os.path.expanduser("~/.config/tabs6-autorotate.lock")
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def load_map():
+    m = dict(DEFAULT_MAP)
+    override = os.environ.get("TABS6_ROTATE_MAP", "")
+    for pair in filter(None, override.split(",")):
+        k, _, v = pair.partition("=")
+        m[k.strip()] = v.strip()
+    return m
+
+
+def output_name():
+    """Pick the enabled output (there is only ever one: the panel)."""
+    try:
+        data = json.loads(subprocess.check_output(["kscreen-doctor", "-j"], text=True))
+        for o in data.get("outputs", []):
+            if o.get("enabled"):
+                return o["name"]
+    except Exception as e:  # noqa: BLE001
+        log(f"kscreen-doctor -j failed: {e}")
+    return None
+
+
+class AutoRotate:
+    def __init__(self):
+        self.map = load_map()
+        self.current = None
+        self.pending = None
+        self.timer = None
+        self.claimed = False
+        self.bus = dbus.SystemBus()
+        # Match signals by path only: iio-sensor-proxy gets restarted whenever
+        # the SLPI recovers from a crash (it never re-discovers a sensor that
+        # vanished from QRTR), and a proxy object bound to the old unique name
+        # would go deaf. Path-matched signals survive the restart.
+        self.bus.add_signal_receiver(
+            self.on_props, "PropertiesChanged", "org.freedesktop.DBus.Properties",
+            None, OBJ)
+        self.bus.watch_name_owner(BUS_NAME, self.on_owner)
+        log(f"map={self.map}")
+        self.claim()
+        # Belt and braces: a freshly restarted iio-sensor-proxy answers
+        # HasAccelerometer=false for about a second and does not always emit a
+        # PropertiesChanged when it flips, so keep trying until a claim sticks.
+        GLib.timeout_add_seconds(2, self.retry)
+
+    def retry(self):
+        if not self.claimed:
+            self.claim()
+        return True
+
+    def iface(self, name):
+        return dbus.Interface(self.bus.get_object(BUS_NAME, OBJ), name)
+
+    def claim(self):
+        try:
+            props = self.iface("org.freedesktop.DBus.Properties")
+            if not bool(props.Get(IFACE, "HasAccelerometer")):
+                self.claimed = False
+                log("no accelerometer yet")
+                return
+            self.iface(IFACE).ClaimAccelerometer()
+            self.claimed = True
+            log("claimed accelerometer")
+            self.current = None
+            self.apply(str(props.Get(IFACE, "AccelerometerOrientation")))
+        except dbus.exceptions.DBusException as e:
+            self.claimed = False
+            log(f"claim failed: {e.get_dbus_message()}")
+
+    def on_owner(self, owner):
+        if owner:
+            log(f"iio-sensor-proxy is up ({owner})")
+            self.claim()
+        else:
+            log("iio-sensor-proxy went away")
+            self.claimed = False
+
+    def on_props(self, iface, changed, invalidated):
+        if "HasAccelerometer" in changed and bool(changed["HasAccelerometer"]) and not self.claimed:
+            self.claim()
+        if "AccelerometerOrientation" in changed:
+            self.apply(str(changed["AccelerometerOrientation"]))
+
+    def apply(self, orientation):
+        rot = self.map.get(orientation)
+        if rot is None:          # "undefined" = lying flat; keep what we have
+            return
+        self.pending = rot
+        if self.timer:
+            GLib.source_remove(self.timer)
+        # small debounce so a tablet being turned over does not thrash KWin
+        self.timer = GLib.timeout_add(400, self.commit)
+
+    def commit(self):
+        self.timer = None
+        rot = self.pending
+        if rot == self.current:
+            return False
+        if os.path.exists(LOCK):
+            log(f"rotation locked, ignoring {rot}")
+            return False
+        name = output_name()
+        if not name:
+            return False
+        cmd = ["kscreen-doctor", f"output.{name}.rotation.{rot}"]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode == 0:
+            log(f"{name} -> {rot}")
+            self.current = rot
+        else:
+            log(f"{' '.join(cmd)} failed: {r.stderr.strip()}")
+        return False
+
+
+def main():
+    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+    try:
+        ar = AutoRotate()
+    except dbus.exceptions.DBusException as e:
+        log(f"iio-sensor-proxy not available: {e}")
+        return 1
+
+    # SIGUSR1 (sent by the tray toggle on unlock): forget the last applied
+    # rotation and re-read the sensor, so unlocking takes effect immediately.
+    def resync(*_):
+        ar.claim()
+        return True
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, resync)
+
+    GLib.MainLoop().run()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

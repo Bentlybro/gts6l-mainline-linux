@@ -1,0 +1,2 @@
+# Tab S6: every appearance of the SLPI fastrpc node (boot or crash recovery) re-syncs the sensor stack
+ACTION=="add", SUBSYSTEM=="misc", KERNEL=="fastrpc-sdsp", TAG+="systemd", ENV{SYSTEMD_WANTS}+="tabs6-sensors-recover.service"

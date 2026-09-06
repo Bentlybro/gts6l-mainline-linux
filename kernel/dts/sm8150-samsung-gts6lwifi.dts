@@ -6,6 +6,7 @@
 /dts-v1/;
 
 #include <dt-bindings/soc/qcom,apr.h>
+#include <dt-bindings/firmware/qcom,scm.h>
 #include <dt-bindings/sound/qcom,q6asm.h>
 #include <dt-bindings/sound/qcom,q6dsp-lpass-ports.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
@@ -964,7 +965,7 @@
  * Firmware is this device's own adsp.mdt plus segments from apnhlos, not the
  * Surface Duo path sm8150.dtsi defaults to.
  */
-&adsp_mem { reg = <0x0 0x98900000 0x0 0x2800000>; };	/* 40 MB; span needs 39 */
+&adsp_mem { reg = <0x0 0x98900000 0x0 0x2700000>; };	/* exactly the 39 MB ELF span */
 
 /*
  * cdsp is not used, so park its reservation on the old ADSP carveout. That
@@ -1088,8 +1089,8 @@
  * venus/slpi regions relocated out of its way - their devices are disabled,
  * the reservations just must not collide with anything. */
 &mpss_mem { reg = <0x0 0x8d800000 0x0 0xa000000>; };
-&venus_mem { reg = <0x0 0x9b100000 0x0 0x500000>; };
-&slpi_mem { reg = <0x0 0x9b600000 0x0 0x400000>; };
+&venus_mem { reg = <0x0 0x9f800000 0x0 0x500000>; };
+&slpi_mem { reg = <0x0 0x9b000000 0x0 0x1400000>; };	/* 20 MB ELF span, ends at the framebuffer */
 
 /* Samsung TZ rejects the rmtfs assign-to-MSS scm call (-22) and Samsung's
  * own dt does no vmid assign on this region - drop it so the device probes
@@ -1101,7 +1102,50 @@
 	alloc-ranges = <0x0 0xb0000000 0x0 0x40000000>;
 	qcom,use-guard-pages;
 };
-&remoteproc_slpi { status = "disabled"; };
+/* SLPI (sensor DSP): the IMU (LSM6DSO), magnetometer and light sensor are
+ * only reachable through it. Same TZ rule as the ADSP: region >= ELF span and
+ * not overlapping anything TZ owns - AND it must sit inside the firmware zone.
+ * 0x9f800000 (just past the last firmware region) was refused with the same
+ * flattened -22; 0x9b000000 was accepted. Downstream's 0x97300000 is inside
+ * the 160 MB modem span, so it cannot go back there. */
+&remoteproc_slpi {
+	status = "okay";
+	firmware-name = "qcom/sm8150/gts6l/slpi.mdt";
+
+	/* FastRPC to the sensors PD, wired the way sdm845.dtsi does it, NOT the
+	 * way sm8150.dtsi does. The sensor process is hypervisor-bypassed on the
+	 * SMMU and uses physical addresses; attaching translated context banks
+	 * to SIDs 0x5a1..0x5a3 makes its first access fault at 0x1fffff000 and
+	 * kills sensor_process on every attach. So: one cb with no iommus, and a
+	 * DMA pool the driver assigns to the DSP VMIDs by hypervisor call. */
+	glink-edge {
+		fastrpc {
+			qcom,vmids = <QCOM_SCM_VMID_HLOS QCOM_SCM_VMID_MSS_MSA
+				      QCOM_SCM_VMID_SSC_Q6 QCOM_SCM_VMID_ADSP_Q6>;
+			memory-region = <&fastrpc_mem>;
+
+			/delete-node/ compute-cb@1;
+			/delete-node/ compute-cb@2;
+			/delete-node/ compute-cb@3;
+
+			compute-cb@0 {
+				compatible = "qcom,fastrpc-compute-cb";
+				reg = <0>;
+			};
+		};
+	};
+};
+
+/* sm8150.dtsi gives reserved-memory no label */
+&{/reserved-memory} {
+	fastrpc_mem: fastrpc {
+		compatible = "shared-dma-pool";
+		alloc-ranges = <0x0 0xb0000000 0x0 0x40000000>;
+		alignment = <0x0 0x400000>;
+		size = <0x0 0x1000000>;
+		reusable;
+	};
+};
 
 
 
